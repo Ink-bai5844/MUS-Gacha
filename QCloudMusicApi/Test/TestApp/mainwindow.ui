@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>800</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Form</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QHBoxLayout" name="horizontalLayout_5">
+    <item>
+     <widget class="QTabWidget" name="tabWidget">
+      <property name="currentIndex">
+       <number>0</number>
+      </property>
+      <widget class="TabCommon" name="tabCommon">
+       <attribute name="title">
+        <string>Common</string>
+       </attribute>
+      </widget>
+      <widget class="QTabWidget" name="tabCrypto">
+       <property name="currentIndex">
+        <number>0</number>
+       </property>
+       <attribute name="title">
+        <string>crypto</string>
+       </attribute>
+       <widget class="TabAes" name="tabAes">
+        <attribute name="title">
+         <string>AES</string>
+        </attribute>
+       </widget>
+       <widget class="TabRsa" name="tabRsa">
+        <attribute name="title">
+         <string>RSA</string>
+        </attribute>
+       </widget>
+      </widget>
+      <widget class="QTabWidget" name="tabLogin">
+       <property name="currentIndex">
+        <number>0</number>
+       </property>
+       <attribute name="title">
+        <string>login</string>
+       </attribute>
+       <widget class="TabLogin_cellphone" name="tabLogin_cellphone">
+        <attribute name="title">
+         <string>login_cellphone</string>
+        </attribute>
+       </widget>
+       <widget class="TabLogin_qr" name="tabLogin_qr">
+        <attribute name="title">
+         <string>login_qr</string>
+        </attribute>
+       </widget>
+      </widget>
+      <widget class="TabServerTest" name="tabServerTest">
+       <attribute name="title">
+        <string>serverTest</string>
+       </attribute>
+      </widget>
+      <widget class="QTabWidget" name="tabUploadPlugin">
+       <property name="currentIndex">
+        <number>0</number>
+       </property>
+       <attribute name="title">
+        <string>uploadPlugin</string>
+       </attribute>
+       <widget class="TabPlaylist_cover_update" name="tabPlaylist_cover_update">
+        <attribute name="title">
+         <string>playlist_cover_update</string>
+        </attribute>
+       </widget>
+       <widget class="TabAvatar_upload" name="tabAvatar_upload">
+        <attribute name="title">
+         <string>avatar_upload</string>
+        </attribute>
+       </widget>
+      </widget>
+      <widget class="QTabWidget" name="tabLibrary">
+       <property name="currentIndex">
+        <number>0</number>
+       </property>
+       <attribute name="title">
+        <string>library</string>
+       </attribute>
+       <widget class="TabApi_c" name="tabApi_c">
+        <attribute name="title">
+         <string>api_c</string>
+        </attribute>
+       </widget>
+       <widget class="TabPlugin" name="tabPlugin">
+        <attribute name="title">
+         <string>plugin</string>
+        </attribute>
+       </widget>
+      </widget>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>800</width>
+     <height>17</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>TabAes</class>
+   <extends>QWidget</extends>
+   <header>tabaes.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>TabRsa</class>
+   <extends>QWidget</extends>
+   <header>tabrsa.h</header>
+  </customwidget>
+  <customwidget>
+   <class>TabCommon</class>
+   <extends>QWidget</extends>
+   <header>tabcommon.h</header>
+  </customwidget>
+  <customwidget>
+   <class>TabLogin_cellphone</class>
+   <extends>QWidget</extends>
+   <header>tablogin_cellphone.h</header>
+  </customwidget>
+  <customwidget>
+   <class>TabLogin_qr</class>
+   <extends>QWidget</extends>
+   <header>tablogin_qr.h</header>
+  </customwidget>
+  <customwidget>
+   <class>TabServerTest</class>
+   <extends>QWidget</extends>
+   <header>tabservertest.h</header>
+  </customwidget>
+  <customwidget>
+   <class>TabPlaylist_cover_update</class>
+   <extends>QWidget</extends>
+   <header>tabplaylist_cover_update.h</header>
+  </customwidget>
+  <customwidget>
+   <class>TabApi_c</class>
+   <extends>QWidget</extends>
+   <header>tabapi_c.h</header>
+  </customwidget>
+  <customwidget>
+   <class>TabAvatar_upload</class>
+   <extends>QWidget</extends>
+   <header>tabavatar_upload.h</header>
+  </customwidget>
+  <customwidget>
+   <class>TabPlugin</class>
+   <extends>QWidget</extends>
+   <header>tabplugin.h</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>

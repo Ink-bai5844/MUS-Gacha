@@ -1,0 +1,6 @@
+streamlit>=1.49
+pandas>=2.0
+numpy>=1.23
+torch>=2.0
+torchaudio>=2.0
+transformers>=4.30
