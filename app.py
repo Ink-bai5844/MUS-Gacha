@@ -1,875 +1,121 @@
 import html
-import hashlib
 import math
-import os
-import pickle
 import re
-import subprocess
-import sys
-from collections import Counter
-from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
+from config import DATA_FILE, HISTORY_RECOMMENDATION_CACHE_SIZE, INITIAL_TAG_WEIGHTS, MAX_DISPLAY
+from data_pipeline import apply_dynamic_music_scores, filter_by_keywords, load_music_data
+from ui_components import render_detail, render_page_style
+from utils_charts import (
+    build_dataframe_chart_data,
+    build_global_preference_chart_data,
+    build_history_preference_chart_data,
+    render_dataframe_chart_section,
+    render_preference_chart_grid,
+)
+from utils_history import (
+    build_history_preference_maps,
+    clear_history_entries,
+    load_history_entries,
+    record_recommendation_history,
+    save_history_entries,
+)
+from utils_text import safe_text
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_FILE = BASE_DIR / "data" / "ink_bai_liked_songs.csv"
-LYRICS_DIR = BASE_DIR / "data" / "lyrics"
-TAGS_FILE = BASE_DIR / "data" / "song_tags.csv"
-CACHE_DIR = BASE_DIR / "datacache"
-PREPROCESSED_DATA_FILE = CACHE_DIR / "preprocessed_music.pkl"
-PREPROCESSED_HASH_FILE = CACHE_DIR / "data.hash"
-PREPROCESS_CACHE_VERSION = "mus-gacha-preprocess-v1"
-MAX_DISPLAY = 60
 
-INITIAL_TAG_WEIGHTS = {
-    "人声强": 1.4,
-    "器乐强": 1.25,
-    "热血": 1.25,
-    "治愈": 1.2,
-    "宁静": 1.15,
-    "纯音乐": 1.15,
-    "悲伤": 0.8,
-}
+SELECTED_SONG_STATE_KEY = "selected_song_id"
+HISTORY_CHART_ENTRIES_STATE_KEY = "history_chart_entries"
+PRESERVE_DISTRIBUTION_ONCE_STATE_KEY = "preserve_distribution_once"
+SELECTION_WRITES_HISTORY_STATE_KEY = "selection_writes_history"
 
-LYRIC_STOP_WORDS = {
-    "作词",
-    "作曲",
-    "编曲",
-    "制作人",
-    "演唱",
-    "歌词",
-    "纯音乐",
-    "欣赏",
-    "music",
-    "lyrics",
-    "composer",
-    "arranger",
-    "the",
-    "and",
-    "you",
-    "that",
-    "this",
-    "with",
-    "for",
-    "are",
-    "was",
-    "were",
-    "your",
-    "我的",
-    "我们",
-    "你们",
-    "他们",
-    "一个",
-    "没有",
-    "什么",
-    "怎么",
-    "还是",
-    "只是",
-    "不要",
-    "不能",
-    "それ",
-    "これ",
-    "から",
-    "まで",
-    "こと",
-    "もの",
-}
 
-COMMENT_RULES = [
-    ("回忆共鸣", ["回忆", "童年", "青春", "小时候", "以前", "当年", "那年", "怀念", "泪目"]),
-    ("治愈共鸣", ["治愈", "温暖", "安心", "舒服", "放松", "平静", "温柔"]),
-    ("悲伤共鸣", ["流泪", "哭", "泪", "难过", "心酸", "遗憾", "破防", "emo"]),
-    ("热血共鸣", ["燃", "热血", "励志", "加油", "力量", "勇气", "坚持"]),
-    ("好听认可", ["好听", "神曲", "封神", "循环", "单曲循环", "喜欢", "爱了", "绝了"]),
-    ("故事感", ["故事", "人生", "经历", "后来", "想起", "陪伴", "告别"]),
-    ("幽默吐槽", ["哈哈", "笑死", "蚌埠", "绷不住", "草", "233", "hhhh"]),
-    ("亲情陪伴", ["爸爸", "妈妈", "父亲", "母亲", "家人", "爸妈", "爷爷", "奶奶"]),
-    ("影视回忆", ["电视剧", "电影", "动漫", "片头", "片尾", "主题曲", "插曲"]),
-]
+def current_selected_song_id():
+    selected_song_id = st.session_state.get(SELECTED_SONG_STATE_KEY)
+    return str(selected_song_id) if selected_song_id else ""
 
-_JANOME_TOKENIZER = None
 
-GENERATED_TAG_COLUMNS = [
-    "generated_language_tags",
-    "style_tags",
-    "emotion_tags",
-    "theme_tags",
-    "scene_tags",
-    "audio_tags",
-    "all_tags",
-    "tag_confidence",
-    "local_audio_path",
-    "local_audio_title",
-    "local_audio_artist",
-    "local_audio_album",
-    "local_duration_seconds",
-    "duration_diff_seconds",
-    "audio_match_score",
-    "audio_tempo_bpm",
-    "audio_onset_strength",
-    "audio_rms",
-    "audio_feature_tags",
-    "audio_vocal_band_ratio",
-    "vocal_presence_score",
-    "instrumental_presence_score",
-    "vocal_instrumental_tags",
-    "mert_cluster",
-    "mert_neighbor_song_ids",
-    "mert_emotion_tags",
-    "mert_valence",
-    "mert_arousal",
-    "mert_embedding_path",
-]
+def make_selectable_table(table_df):
+    editable_df = table_df.copy()
+    selected_song_id = current_selected_song_id()
+    editable_df["选中"] = editable_df["song_id"].astype(str).eq(selected_song_id)
+    return editable_df
 
-TEXT_COLUMNS = [
-    "name",
-    "aliases",
-    "translations",
-    "artist_names",
-    "album_name",
-    "lyric_excerpt",
-    "translation_excerpt",
-    "romaji_excerpt",
-    "similar_song_names",
-    "similar_artist_names",
-    "wiki_summary_excerpt",
-    "first_hot_comment",
-    "first_comment",
-    "style_tags",
-    "emotion_tags",
-    "theme_tags",
-    "scene_tags",
-    "audio_tags",
-    "all_tags",
-]
+
+def apply_table_selection(edited_df, source_df):
+    if "选中" not in edited_df.columns or "song_id" not in edited_df.columns:
+        return
+
+    selected_rows = edited_df[edited_df["选中"].fillna(False)]
+    if selected_rows.empty:
+        return
+
+    current_song_id = current_selected_song_id()
+    newly_selected = selected_rows[selected_rows["song_id"].astype(str) != current_song_id]
+    chosen_row = newly_selected.iloc[0] if not newly_selected.empty else selected_rows.iloc[0]
+    chosen_song_id = str(chosen_row["song_id"])
+
+    if chosen_song_id != current_song_id:
+        matched_rows = source_df[source_df["song_id"].astype(str) == chosen_song_id]
+        history_row = matched_rows.iloc[0] if not matched_rows.empty else chosen_row
+        st.session_state[SELECTED_SONG_STATE_KEY] = chosen_song_id
+        if st.session_state.get(SELECTION_WRITES_HISTORY_STATE_KEY, True):
+            st.session_state[PRESERVE_DISTRIBUTION_ONCE_STATE_KEY] = True
+            record_recommendation_history(history_row, "select")
+        st.toast(f"已选中：{safe_text(history_row.get('name'))}", icon="✅")
+        st.rerun()
+
+
+def get_history_chart_entries(history_entries):
+    if HISTORY_CHART_ENTRIES_STATE_KEY not in st.session_state:
+        st.session_state[HISTORY_CHART_ENTRIES_STATE_KEY] = history_entries
+
+    if st.session_state.pop(PRESERVE_DISTRIBUTION_ONCE_STATE_KEY, False):
+        return st.session_state[HISTORY_CHART_ENTRIES_STATE_KEY]
+
+    st.session_state[HISTORY_CHART_ENTRIES_STATE_KEY] = history_entries
+    return history_entries
+
+
+def selected_or_first(df, sort_columns):
+    if df.empty:
+        return None, False
+
+    selected_song_id = current_selected_song_id()
+    if selected_song_id:
+        matched = df[df["song_id"].astype(str) == selected_song_id]
+        if not matched.empty:
+            return matched.iloc[0], True
+
+    return df.sort_values(sort_columns, ascending=False).iloc[0], False
+
+
+def build_history_table(history_entries):
+    rows = []
+    for index, entry in enumerate(history_entries):
+        if not isinstance(entry, dict):
+            continue
+        tag_summary = " | ".join((entry.get("all_tags") or [])[:6])
+        rows.append(
+            {
+                "删除": False,
+                "序号": index + 1,
+                "选中时间": safe_text(entry.get("selected_at")),
+                "动作": safe_text(entry.get("action")),
+                "歌曲ID": safe_text(entry.get("song_id")),
+                "歌曲": safe_text(entry.get("name")),
+                "歌手": safe_text(entry.get("artist_names")),
+                "专辑": safe_text(entry.get("album_name")),
+                "标签": tag_summary,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 st.set_page_config(page_title="墨白的音乐仓库", layout="wide")
-st.markdown(
-    """
-    <style>
-    div[id^="gdg-overlay-"] {
-        margin-left: 96px !important;
-        z-index: 99999 !important;
-        border-radius: 8px !important;
-        box-shadow: 5px 5px 18px rgba(0, 0, 0, 0.32) !important;
-        overflow: hidden !important;
-    }
-    .block-container {
-        padding-top: 1.4rem;
-        padding-bottom: 2rem;
-    }
-    [data-testid="stMetric"] {
-        border: 1px solid rgba(49, 51, 63, 0.14);
-        border-radius: 8px;
-        padding: 0.75rem 0.9rem;
-        background: rgba(250, 250, 250, 0.72);
-    }
-    .song-title {
-        font-size: 1.45rem;
-        font-weight: 750;
-        margin-bottom: 0.1rem;
-    }
-    .muted-line {
-        color: rgba(49, 51, 63, 0.70);
-        margin-bottom: 0.55rem;
-    }
-    .lyric-box {
-        border: 1px solid rgba(49, 51, 63, 0.16);
-        border-radius: 8px;
-        padding: 1rem;
-        max-height: 520px;
-        overflow: auto;
-        white-space: pre-wrap;
-        line-height: 1.75;
-        background: rgba(255, 255, 255, 0.68);
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-def safe_text(value):
-    if pd.isna(value):
-        return ""
-    return str(value).strip()
-
-
-def split_pipe(value):
-    return [part.strip() for part in safe_text(value).split("|") if part.strip()]
-
-
-def split_tags(value):
-    return [part.strip() for part in safe_text(value).split("|") if part.strip()]
-
-
-def unique_items(items):
-    return list(dict.fromkeys(item for item in items if item))
-
-
-def extract_title_terms(row):
-    original_values = [
-        safe_text(row.get("name")),
-        safe_text(row.get("album_name")),
-        *split_pipe(row.get("aliases")),
-        *split_pipe(row.get("translations")),
-    ]
-    original_norms = {normalize_lyric_token(value) for value in original_values if safe_text(value)}
-    text = " ".join(
-        [
-            safe_text(row.get("name")),
-            safe_text(row.get("aliases")),
-            safe_text(row.get("translations")),
-            safe_text(row.get("album_name")),
-        ]
-    ).lower()
-    language_tags = set(row.get("language_tags", []))
-    raw_terms = []
-    if {"国语", "粤语", "华语"} & language_tags or re.search(r"[\u4e00-\u9fff]", text):
-        raw_terms.extend(tokenize_chinese(text))
-    if "日语" in language_tags or re.search(r"[\u3040-\u30ff]", text):
-        raw_terms.extend(tokenize_japanese(text))
-    if "英语" in language_tags or re.search(r"[a-zA-Z]{3,}", text):
-        raw_terms.extend(tokenize_english(text))
-    raw_terms.extend(re.split(r"[\s,，。/\\|·・:：;；\-—_()\[\]{}<>《》“”\"'!！?？]+", text))
-
-    terms = []
-    for term in raw_terms:
-        term = normalize_lyric_token(term)
-        if not term or term in LYRIC_STOP_WORDS:
-            continue
-        if term in original_norms:
-            continue
-        if re.search(r"[\u4e00-\u9fff]", term) and len(term) > 6:
-            continue
-        if len(term) >= 2 and len(term) <= 12:
-            terms.append(term)
-    return unique_items(terms)
-
-
-def clean_lrc_text(text):
-    text = re.sub(r"\[[^\]]+\]", " ", safe_text(text))
-    text = re.sub(r"作词|作曲|编曲|制作人|OP|SP|Publisher", " ", text, flags=re.IGNORECASE)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def tokenize_chinese(text):
-    try:
-        import jieba
-
-        return jieba.lcut(text)
-    except Exception:
-        return re.findall(r"[\u4e00-\u9fff]{2,}", text)
-
-
-def tokenize_japanese(text):
-    global _JANOME_TOKENIZER
-    try:
-        from janome.tokenizer import Tokenizer
-
-        if _JANOME_TOKENIZER is None:
-            _JANOME_TOKENIZER = Tokenizer()
-        return [token.surface for token in _JANOME_TOKENIZER.tokenize(text)]
-    except Exception:
-        return re.findall(r"[\u3040-\u30ff\u3400-\u9fff]{2,}", text)
-
-
-def tokenize_english(text):
-    try:
-        from nltk.tokenize import wordpunct_tokenize
-
-        return wordpunct_tokenize(text)
-    except Exception:
-        return re.findall(r"[a-zA-Z][a-zA-Z']+", text)
-
-
-def normalize_lyric_token(token):
-    token = safe_text(token).strip().lower()
-    token = re.sub(r"^[^\w\u3040-\u30ff\u3400-\u9fff]+|[^\w\u3040-\u30ff\u3400-\u9fff]+$", "", token)
-    return token
-
-
-def extract_lyric_terms(row, limit=40):
-    lyric = clean_lrc_text(row.get("full_lyric") or row.get("lyric_excerpt"))
-    if not lyric:
-        return []
-
-    language_tags = set(row.get("language_tags", []))
-    tokens = []
-    if {"国语", "粤语", "华语"} & language_tags or re.search(r"[\u4e00-\u9fff]", lyric):
-        tokens.extend(tokenize_chinese(lyric))
-    if "日语" in language_tags or re.search(r"[\u3040-\u30ff]", lyric):
-        tokens.extend(tokenize_japanese(lyric))
-    if "英语" in language_tags or re.search(r"[a-zA-Z]{3,}", lyric):
-        tokens.extend(tokenize_english(lyric))
-
-    normalized = []
-    for token in tokens:
-        token = normalize_lyric_token(token)
-        if not token or token in LYRIC_STOP_WORDS:
-            continue
-        if token.isdigit():
-            continue
-        if re.fullmatch(r"[a-z]", token):
-            continue
-        if len(token) < 2:
-            continue
-        normalized.append(token)
-
-    counter = Counter(normalized)
-    return [term for term, _count in counter.most_common(limit)]
-
-
-def extract_comment_semantic_tags(row):
-    text = " ".join(
-        [
-            safe_text(row.get("first_hot_comment")),
-            safe_text(row.get("first_comment")),
-        ]
-    )
-    tags = []
-    for tag, needles in COMMENT_RULES:
-        if any(needle.lower() in text.lower() for needle in needles):
-            tags.append(tag)
-    return unique_items(tags)
-
-
-def parse_bool(value):
-    if isinstance(value, bool):
-        return value
-    return safe_text(value).lower() in {"true", "1", "yes", "y"}
-
-
-def read_lyric(song_id):
-    path = LYRICS_DIR / f"{song_id}.txt"
-    if not path.exists():
-        return ""
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except UnicodeDecodeError:
-        return path.read_text(encoding="utf-8", errors="replace").strip()
-
-
-def normalize_for_search(value):
-    return re.sub(r"\s+", " ", safe_text(value).lower())
-
-
-def open_local_file(path_text):
-    path = Path(path_text)
-    if not path.exists():
-        return False, f"未找到本地文件：{path}"
-
-    try:
-        if os.name == "nt":
-            os.startfile(str(path))  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(path)])
-        else:
-            subprocess.Popen(["xdg-open", str(path)])
-    except Exception as exc:
-        return False, f"打开失败：{exc}"
-    return True, f"已打开：{path.name}"
-
-
-def build_search_text(row):
-    parts = [safe_text(row.get(col, "")) for col in TEXT_COLUMNS]
-    parts.append(safe_text(row.get("full_lyric", "")))
-    return normalize_for_search(" ".join(parts))
-
-
-def minmax(series, index=None):
-    if not isinstance(series, pd.Series):
-        series = pd.Series(series, index=index)
-    numeric = pd.to_numeric(series, errors="coerce").fillna(0)
-    max_value = numeric.max()
-    if max_value <= 0:
-        return numeric * 0
-    return numeric / max_value
-
-
-def preferred_quality(row):
-    for prefix, label in [
-        ("hires", "Hi-Res"),
-        ("lossless", "无损"),
-        ("exhigh", "极高"),
-        ("standard", "标准"),
-    ]:
-        url = safe_text(row.get(f"{prefix}_url", ""))
-        br = pd.to_numeric(row.get(f"{prefix}_br", 0), errors="coerce")
-        if url or (pd.notna(br) and br > 0):
-            return label
-    return "未知"
-
-
-def extract_language_tags(row):
-    text = safe_text(row.get("wiki_summary_excerpt", ""))
-    tags = []
-    for candidate in ["国语", "粤语", "英语", "日语", "韩语", "纯音乐", "华语", "欧美"]:
-        if candidate in text:
-            tags.append(candidate)
-    for tag in split_tags(row.get("generated_language_tags", "")):
-        if tag not in tags:
-            tags.append(tag)
-    return tags or ["未知"]
-
-
-def load_generated_tags():
-    if not TAGS_FILE.exists():
-        return pd.DataFrame()
-
-    tags_df = pd.read_csv(TAGS_FILE, dtype={"song_id": "string"})
-    tags_df.columns = [col.strip() for col in tags_df.columns]
-    if "language_tags" in tags_df.columns:
-        tags_df = tags_df.rename(columns={"language_tags": "generated_language_tags"})
-
-    keep_columns = ["song_id"] + [col for col in GENERATED_TAG_COLUMNS if col in tags_df.columns]
-    return tags_df[keep_columns].drop_duplicates("song_id")
-
-
-def top_counts(df, column, limit=12):
-    values = []
-    for items in df[column]:
-        values.extend(items)
-    if not values:
-        return pd.DataFrame({"名称": [], "数量": []})
-    counts = pd.Series(values).value_counts().head(limit)
-    return counts.rename_axis("名称").reset_index(name="数量")
-
-
-def filter_by_keywords(df, query):
-    terms = [term.strip().lower() for term in re.split(r"[,，\s]+", query or "") if term.strip()]
-    if not terms:
-        return df
-
-    mask = pd.Series(True, index=df.index)
-    for term in terms:
-        mask &= df["search_text"].str.contains(term, regex=False, na=False)
-    return df[mask]
-
-
-def frequency_counter(series):
-    counter = Counter()
-    for items in series:
-        counter.update(items)
-    return counter
-
-
-def feature_base_scores(counter):
-    return {name: math.log1p(count) * 10.0 for name, count in counter.items()}
-
-
-def multi_feature_score(series, base_scores, weights=None, default_weight=1.0):
-    weights = weights or {}
-    scores = []
-    for items in series:
-        if not items:
-            scores.append(0.0)
-            continue
-        total = 0.0
-        seen = Counter(items)
-        for item, count in seen.items():
-            total += base_scores.get(item, 0.0) * float(weights.get(item, default_weight)) * count
-        scores.append(total / math.sqrt(max(len(items), 1)))
-    return pd.Series(scores, index=series.index, dtype="float64")
-
-
-def single_feature_score(series, base_scores, weights=None, default_weight=1.0):
-    weights = weights or {}
-    scores = [
-        base_scores.get(item, 0.0) * float(weights.get(item, default_weight))
-        for item in series
-    ]
-    return pd.Series(scores, index=series.index, dtype="float64")
-
-
-def build_scoring_resources(df):
-    if df.empty:
-        return build_empty_scoring_resources()
-
-    def list_series(column):
-        if column in df.columns:
-            return df[column]
-        return pd.Series([[] for _ in range(len(df))], index=df.index, dtype="object")
-
-    return {
-        "all_tags": frequency_counter(list_series("generated_tag_list")),
-        "language": frequency_counter(list_series("language_tags")),
-        "style": frequency_counter(list_series("style_tag_list")),
-        "emotion": frequency_counter(list_series("emotion_tag_list")),
-        "theme": frequency_counter(list_series("theme_tag_list")),
-        "scene": frequency_counter(list_series("scene_tag_list")),
-        "audio": frequency_counter(list_series("audio_tag_list")),
-        "lyric_terms": frequency_counter(list_series("lyric_terms")),
-        "comment_semantic": frequency_counter(list_series("comment_semantic_tags")),
-        "artists": frequency_counter(list_series("artist_list")),
-        "title_terms": frequency_counter(list_series("title_terms")),
-    }
-
-
-def build_empty_scoring_resources():
-    return {
-        "all_tags": Counter(),
-        "language": Counter(),
-        "style": Counter(),
-        "emotion": Counter(),
-        "theme": Counter(),
-        "scene": Counter(),
-        "audio": Counter(),
-        "lyric_terms": Counter(),
-        "comment_semantic": Counter(),
-        "artists": Counter(),
-        "title_terms": Counter(),
-    }
-
-
-def update_path_signature(hasher, path):
-    relative_name = str(path.relative_to(BASE_DIR)) if path.is_relative_to(BASE_DIR) else str(path)
-    hasher.update(relative_name.encode("utf-8"))
-    if not path.exists():
-        hasher.update(b":missing")
-        return
-
-    stat = path.stat()
-    hasher.update(str(stat.st_size).encode("utf-8"))
-    hasher.update(str(stat.st_mtime_ns).encode("utf-8"))
-
-
-def get_preprocess_data_hash():
-    hasher = hashlib.md5()
-    hasher.update(PREPROCESS_CACHE_VERSION.encode("utf-8"))
-
-    for path in [DATA_FILE, TAGS_FILE]:
-        update_path_signature(hasher, path)
-
-    if LYRICS_DIR.exists():
-        lyric_paths = sorted(LYRICS_DIR.glob("*.txt"), key=lambda item: item.name)
-        hasher.update(str(len(lyric_paths)).encode("utf-8"))
-        for path in lyric_paths:
-            update_path_signature(hasher, path)
-    else:
-        hasher.update(b"lyrics-dir:missing")
-
-    return hasher.hexdigest()
-
-
-def normalize_preprocessed_payload(payload):
-    if isinstance(payload, dict) and "df" in payload:
-        df = payload["df"]
-        scoring_resources = payload.get("scoring_resources")
-        if scoring_resources is None:
-            scoring_resources = build_scoring_resources(df)
-        return df, scoring_resources
-
-    if isinstance(payload, pd.DataFrame):
-        return payload, build_scoring_resources(payload)
-
-    raise ValueError("预处理缓存文件格式无法识别，请删除 datacache 后重试。")
-
-
-def apply_dynamic_music_scores(
-    df,
-    scoring_resources,
-    dimension_weights,
-    tag_weights,
-    artist_weights,
-    title_weights,
-    lyric_weights,
-    comment_weights,
-):
-    if df.empty:
-        result = df.copy()
-        result["dynamic_score"] = pd.Series(dtype=float)
-        return result
-
-    result = df.copy()
-    total = pd.Series(0.0, index=result.index, dtype="float64")
-    detail_parts = {}
-
-    feature_specs = [
-        ("all_tags", "generated_tag_list", "综合标签", tag_weights, 0.45),
-        ("language", "language_tags", "语种", tag_weights, 0.35),
-        ("style", "style_tag_list", "风格", tag_weights, 0.55),
-        ("emotion", "emotion_tag_list", "情绪", tag_weights, 0.65),
-        ("theme", "theme_tag_list", "主题", tag_weights, 0.45),
-        ("scene", "scene_tag_list", "场景", tag_weights, 0.45),
-        ("audio", "audio_tag_list", "音频标签", tag_weights, 0.60),
-    ]
-
-    for resource_key, column, label, weights, scale in feature_specs:
-        counter = scoring_resources[resource_key]
-        scores = multi_feature_score(result[column], feature_base_scores(counter), weights)
-        contribution = scores * float(dimension_weights.get(label, 1.0)) * scale
-        detail_parts[label] = contribution
-        total += contribution
-
-    artist_scores = multi_feature_score(
-        result["artist_list"],
-        feature_base_scores(scoring_resources["artists"]),
-        artist_weights,
-        default_weight=1.0,
-    )
-    artist_contribution = artist_scores * float(dimension_weights.get("歌手", 1.0)) * 0.85
-    detail_parts["歌手"] = artist_contribution
-    total += artist_contribution
-
-    title_scores = multi_feature_score(
-        result["title_terms"],
-        feature_base_scores(scoring_resources["title_terms"]),
-        title_weights,
-        default_weight=1.0,
-    )
-    title_contribution = title_scores * float(dimension_weights.get("歌名关键词", 1.0)) * 0.55
-    detail_parts["歌名关键词"] = title_contribution
-    total += title_contribution
-
-    lyric_scores = multi_feature_score(
-        result["lyric_terms"],
-        feature_base_scores(scoring_resources["lyric_terms"]),
-        lyric_weights,
-        default_weight=1.0,
-    )
-    lyric_contribution = lyric_scores * float(dimension_weights.get("歌词关键词", 1.0)) * 0.50
-    detail_parts["歌词关键词"] = lyric_contribution
-    total += lyric_contribution
-
-    comment_scores = multi_feature_score(
-        result["comment_semantic_tags"],
-        feature_base_scores(scoring_resources["comment_semantic"]),
-        comment_weights,
-        default_weight=1.0,
-    )
-    comment_contribution = comment_scores * float(dimension_weights.get("评论语义", 1.0)) * 0.75
-    detail_parts["评论语义"] = comment_contribution
-    total += comment_contribution
-
-    numeric_specs = [
-        ("热度", minmax(result["popularity"]) * 35),
-        ("歌词完整度", minmax(result["lyric_line_count"]) * 24),
-        ("音质", result["quality"].isin(["Hi-Res", "无损"]).astype(float) * 18),
-        ("可播放", result["playable"].astype(float) * 12),
-        ("本地音频", result["local_audio_path"].astype(str).str.len().gt(0).astype(float) * 18),
-        ("MERT", result["mert_embedding_path"].astype(str).str.len().gt(0).astype(float) * 14),
-    ]
-    for label, scores in numeric_specs:
-        contribution = scores * float(dimension_weights.get(label, 1.0))
-        detail_parts[label] = contribution
-        total += contribution
-
-    result["dynamic_score_raw"] = total
-    result["dynamic_score"] = total.round().astype(int)
-    top_labels = []
-    for idx in result.index:
-        ranked = sorted(
-            ((label, float(values.loc[idx])) for label, values in detail_parts.items()),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-        top_labels.append(" | ".join(f"{label}:{value:.1f}" for label, value in ranked[:5] if abs(value) >= 0.1))
-    result["score_breakdown"] = top_labels
-    return result
-
-
-def build_preprocessed_music_data():
-    if not DATA_FILE.exists():
-        return pd.DataFrame(), build_empty_scoring_resources()
-
-    df = pd.read_csv(DATA_FILE, dtype={"song_id": "string", "artist_ids": "string", "album_id": "string"})
-    df.columns = [col.strip() for col in df.columns]
-
-    for col in TEXT_COLUMNS + ["song_id", "album_pic_url", "duration_text", "publish_date"]:
-        if col in df.columns:
-            df[col] = df[col].fillna("").astype(str)
-
-    for col in [
-        "duration_seconds",
-        "popularity",
-        "comment_total",
-        "hot_comment_count",
-        "lyric_line_count",
-        "standard_br",
-        "exhigh_br",
-        "lossless_br",
-        "hires_br",
-    ]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-        else:
-            df[col] = 0
-
-    for col in ["playable", "has_lyric", "has_translation", "has_romaji", "check_success"]:
-        if col in df.columns:
-            df[col] = df[col].apply(parse_bool)
-        else:
-            df[col] = False
-
-    df["publish_year"] = pd.to_datetime(df.get("publish_date", ""), errors="coerce").dt.year
-    df["duration_minutes"] = df["duration_seconds"] / 60
-    df["artist_list"] = df.get("artist_names", "").apply(split_pipe)
-    df["quality"] = df.apply(preferred_quality, axis=1)
-    df["full_lyric"] = df["song_id"].apply(read_lyric)
-
-    generated_tags = load_generated_tags()
-    if not generated_tags.empty:
-        df = df.merge(generated_tags, on="song_id", how="left")
-    for col in GENERATED_TAG_COLUMNS:
-        if col not in df.columns:
-            df[col] = ""
-        df[col] = df[col].fillna("").astype(str)
-
-    df["language_tags"] = df.apply(extract_language_tags, axis=1)
-    df["generated_tag_list"] = df["all_tags"].apply(split_tags)
-    df["style_tag_list"] = df["style_tags"].apply(split_tags)
-    df["emotion_tag_list"] = df["emotion_tags"].apply(split_tags)
-    df["theme_tag_list"] = df["theme_tags"].apply(split_tags)
-    df["scene_tag_list"] = df["scene_tags"].apply(split_tags)
-    df["audio_tag_list"] = df["audio_tags"].apply(split_tags)
-    df["title_terms"] = df.apply(extract_title_terms, axis=1)
-    df["lyric_terms"] = df.apply(extract_lyric_terms, axis=1)
-    df["comment_semantic_tags"] = df.apply(extract_comment_semantic_tags, axis=1)
-    df["search_text"] = df.apply(build_search_text, axis=1)
-    df["lyrics_chars"] = df["full_lyric"].str.len()
-    df["netease_url"] = "https://music.163.com/#/song?id=" + df["song_id"].astype(str)
-
-    score = (
-        minmax(df["popularity"]) * 34
-        + minmax(df["comment_total"]).pow(0.45) * 28
-        + minmax(df["lyric_line_count"]) * 14
-        + df["has_translation"].astype(int) * 8
-        + df["playable"].astype(int) * 10
-        + df["has_romaji"].astype(int) * 4
-        + df["quality"].isin(["Hi-Res", "无损"]).astype(int) * 8
-    )
-    df["recommend_score"] = score.round().clip(0, 100)
-    return df, build_scoring_resources(df)
-
-
-@st.cache_data(max_entries=1, show_spinner=False)
-def load_music_data():
-    current_hash = get_preprocess_data_hash()
-
-    if PREPROCESSED_DATA_FILE.exists() and PREPROCESSED_HASH_FILE.exists():
-        saved_hash = PREPROCESSED_HASH_FILE.read_text(encoding="utf-8").strip()
-        if saved_hash == current_hash:
-            print("触发文件级预处理缓存，跳过 CSV/歌词/标签重建。")
-            with PREPROCESSED_DATA_FILE.open("rb") as file:
-                cached_payload = pickle.load(file)
-            df, scoring_resources = normalize_preprocessed_payload(cached_payload)
-            if not isinstance(cached_payload, dict) or "scoring_resources" not in cached_payload:
-                with PREPROCESSED_DATA_FILE.open("wb") as file:
-                    pickle.dump(
-                        {"df": df, "scoring_resources": scoring_resources},
-                        file,
-                        protocol=pickle.HIGHEST_PROTOCOL,
-                    )
-            return df, scoring_resources
-
-    print("预处理缓存失效，重新读取 CSV、歌词与标签。")
-    df, scoring_resources = build_preprocessed_music_data()
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    with PREPROCESSED_DATA_FILE.open("wb") as file:
-        pickle.dump(
-            {"df": df, "scoring_resources": scoring_resources},
-            file,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
-    PREPROCESSED_HASH_FILE.write_text(current_hash, encoding="utf-8")
-    return df, scoring_resources
-
-
-def render_detail(song):
-    left, right = st.columns([1.1, 2.4], gap="large")
-
-    with left:
-        cover = safe_text(song.get("album_pic_url", ""))
-        if cover:
-            st.image(cover, width="stretch")
-        st.link_button("打开网易云页面", safe_text(song.get("netease_url", "")), width="stretch")
-
-        local_audio_path = safe_text(song.get("local_audio_path", ""))
-        if local_audio_path:
-            local_path = Path(local_audio_path)
-            if local_path.exists():
-                st.caption("本地音频")
-                st.audio(str(local_path))
-                if st.button("打开本地音频", width="stretch", key=f"open-local-{song.get('song_id')}"):
-                    ok, message = open_local_file(local_audio_path)
-                    if ok:
-                        st.success(message)
-                    else:
-                        st.error(message)
-            else:
-                st.warning(f"本地音频路径已失效：{local_audio_path}")
-        else:
-            audio_url = (
-                safe_text(song.get("hires_url", ""))
-                or safe_text(song.get("lossless_url", ""))
-                or safe_text(song.get("exhigh_url", ""))
-                or safe_text(song.get("standard_url", ""))
-            )
-            if audio_url:
-                st.audio(audio_url)
-
-    with right:
-        st.markdown(f"<div class='song-title'>{html.escape(safe_text(song.get('name')))}</div>", unsafe_allow_html=True)
-        st.markdown(
-            "<div class='muted-line'>"
-            f"{html.escape(safe_text(song.get('artist_names')))} · {html.escape(safe_text(song.get('album_name')))}"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-
-        meta_cols = st.columns(4)
-        meta_cols[0].metric("推荐分", int(song.get("dynamic_score", song.get("recommend_score", 0))))
-        meta_cols[1].metric("热度", int(song.get("popularity", 0)))
-        meta_cols[2].metric("评论", int(song.get("comment_total", 0)))
-        meta_cols[3].metric("时长", safe_text(song.get("duration_text", "")) or f"{song.get('duration_minutes', 0):.1f} 分")
-
-        info = pd.DataFrame(
-            [
-                ("发行日期", safe_text(song.get("publish_date"))),
-                ("版权/可播", f"{safe_text(song.get('copyright'))} / {'可播' if song.get('playable') else '不可播'}"),
-                ("最佳音质", safe_text(song.get("quality"))),
-                ("智能标签", safe_text(song.get("all_tags"))),
-                ("评分拆解", safe_text(song.get("score_breakdown"))),
-                ("歌词关键词", " | ".join(song.get("lyric_terms", [])[:20])),
-                ("评论语义", " | ".join(song.get("comment_semantic_tags", []))),
-                ("本地音频", safe_text(song.get("local_audio_path"))),
-                ("本地元数据", " · ".join([item for item in [
-                    safe_text(song.get("local_audio_title")),
-                    safe_text(song.get("local_audio_artist")),
-                    safe_text(song.get("local_audio_album")),
-                ] if item])),
-                ("音频特征", " · ".join([item for item in [
-                    f"{safe_text(song.get('audio_tempo_bpm'))} BPM" if safe_text(song.get("audio_tempo_bpm")) else "",
-                    safe_text(song.get("audio_feature_tags")),
-                ] if item])),
-                ("人声/器乐", " · ".join([item for item in [
-                    safe_text(song.get("vocal_instrumental_tags")),
-                    f"人声 {safe_text(song.get('vocal_presence_score'))}" if safe_text(song.get("vocal_presence_score")) else "",
-                    f"器乐 {safe_text(song.get('instrumental_presence_score'))}" if safe_text(song.get("instrumental_presence_score")) else "",
-                ] if item])),
-                ("MERT", " · ".join([item for item in [
-                    f"聚类 {safe_text(song.get('mert_cluster'))}" if safe_text(song.get("mert_cluster")) else "",
-                    safe_text(song.get("mert_emotion_tags")),
-                ] if item])),
-                ("歌词行数", str(int(song.get("lyric_line_count", 0)))),
-                ("热门评论", safe_text(song.get("first_hot_comment"))),
-                ("相似歌曲", safe_text(song.get("similar_song_names"))),
-            ],
-            columns=["字段", "内容"],
-        )
-        st.dataframe(info, hide_index=True, width="stretch", height=250)
-
-    lyric = safe_text(song.get("full_lyric", "")) or safe_text(song.get("lyric_excerpt", ""))
-    if lyric:
-        st.markdown("#### 歌词")
-        st.markdown(f"<div class='lyric-box'>{html.escape(lyric)}</div>", unsafe_allow_html=True)
-    else:
-        st.info("这首歌暂时没有本地歌词。")
+render_page_style()
+st.session_state.setdefault(SELECTION_WRITES_HISTORY_STATE_KEY, True)
 
 
 with st.spinner("正在同步预处理缓存与评分资源..."):
@@ -917,24 +163,25 @@ st.sidebar.subheader("推荐评分配置")
 
 with st.sidebar.expander("全局维度权重", expanded=True):
     dimension_weights = {
-        "综合标签": st.slider("综合标签倍率", 0.0, 5.0, 1.0, 0.1),
-        "语种": st.slider("语种倍率", 0.0, 5.0, 0.5, 0.1),
-        "风格": st.slider("风格倍率", 0.0, 5.0, 1.0, 0.1),
-        "情绪": st.slider("情绪倍率", 0.0, 5.0, 1.0, 0.1),
-        "主题": st.slider("主题倍率", 0.0, 5.0, 0.8, 0.1),
-        "场景": st.slider("场景倍率", 0.0, 5.0, 0.8, 0.1),
-        "音频标签": st.slider("音频标签倍率", 0.0, 5.0, 1.0, 0.1),
-        "歌手": st.slider("歌手倍率", 0.0, 5.0, 1.0, 0.1),
-        "歌名关键词": st.slider("歌名/专辑关键词倍率", 0.0, 5.0, 0.7, 0.1),
-        "歌词关键词": st.slider("歌词关键词倍率", 0.0, 5.0, 0.8, 0.1),
-        "评论语义": st.slider("评论语义倍率", 0.0, 5.0, 0.8, 0.1),
-        "热度": st.slider("热度倍率", 0.0, 5.0, 0.8, 0.1),
-        "歌词完整度": st.slider("歌词完整度倍率", 0.0, 5.0, 0.5, 0.1),
-        "音质": st.slider("音质倍率", 0.0, 5.0, 0.5, 0.1),
-        "可播放": st.slider("可播放倍率", 0.0, 5.0, 0.6, 0.1),
-        "本地音频": st.slider("本地音频倍率", 0.0, 5.0, 0.8, 0.1),
-        "MERT": st.slider("MERT 可用倍率", 0.0, 5.0, 0.4, 0.1),
+        "综合标签": st.slider("综合标签倍率（汇总所有智能标签的整体匹配度）", 0.0, 5.0, 1.0, 0.1),
+        "语种": st.slider("语种倍率（国语/粤语/英语/日语等语言偏好）", 0.0, 5.0, 0.5, 0.1),
+        "风格": st.slider("风格倍率（流行/古风/摇滚/电子等曲风偏好）", 0.0, 5.0, 1.0, 0.1),
+        "情绪": st.slider("情绪倍率（治愈/热血/悲伤/宁静等听感倾向）", 0.0, 5.0, 1.0, 0.1),
+        "主题": st.slider("主题倍率（爱情/成长/时光/旅途等内容主题）", 0.0, 5.0, 0.8, 0.1),
+        "场景": st.slider("场景倍率（学习/睡前/通勤/运动等使用场景）", 0.0, 5.0, 0.8, 0.1),
+        "音频标签": st.slider("音频标签倍率（快慢节奏、能量、人声/器乐等音频特征）", 0.0, 5.0, 1.0, 0.1),
+        "歌手": st.slider("歌手倍率（常见或指定歌手带来的推荐加成）", 0.0, 5.0, 1.0, 0.1),
+        "歌名关键词": st.slider("歌名/专辑关键词倍率（从歌名、别名、专辑名提取的关键词）", 0.0, 5.0, 0.7, 0.1),
+        "歌词关键词": st.slider("歌词关键词倍率（从完整歌词中提取的高频语义词）", 0.0, 5.0, 0.8, 0.1),
+        "评论语义": st.slider("评论语义倍率（热门评论里的回忆、治愈、热血等共鸣）", 0.0, 5.0, 0.8, 0.1),
+        "热度": st.slider("热度倍率（网易云热度数值带来的基础加分）", 0.0, 5.0, 0.8, 0.1),
+        "歌词完整度": st.slider("歌词完整度倍率（歌词行数和本地歌词完整程度）", 0.0, 5.0, 0.5, 0.1),
+        "音质": st.slider("音质倍率（Hi-Res/无损等高音质资源加成）", 0.0, 5.0, 0.5, 0.1),
+        "可播放": st.slider("可播放倍率（当前歌曲是否可在线播放）", 0.0, 5.0, 0.6, 0.1),
+        "本地音频": st.slider("本地音频倍率（已匹配到本地音乐文件的加成）", 0.0, 5.0, 0.8, 0.1),
+        "MERT": st.slider("MERT 可用倍率（已提取 MERT embedding/情绪信息的加成）", 0.0, 5.0, 0.4, 0.1),
     }
+    global_history_weight = st.slider("历史偏好总分倍率", 0.0, 5.0, 1.0, 0.1)
 
 all_weight_tags = sorted(scoring_resources["all_tags"].keys())
 valid_default_tags = [tag for tag in INITIAL_TAG_WEIGHTS if tag in all_weight_tags]
@@ -1007,6 +254,15 @@ with st.sidebar.expander("评论语义权重配置", expanded=False):
             key=f"comment-weight-{tag}",
         )
 
+history_entries = load_history_entries()
+history_chart_entries = get_history_chart_entries(history_entries)
+
+history_preference = (
+    build_history_preference_maps(history_entries, scoring_resources, dimension_weights)
+    if global_history_weight > 0 and history_entries
+    else None
+)
+
 scored_df = apply_dynamic_music_scores(
     df_base,
     scoring_resources,
@@ -1016,6 +272,8 @@ scored_df = apply_dynamic_music_scores(
     dynamic_title_weights,
     dynamic_lyric_weights,
     dynamic_comment_weights,
+    history_preference=history_preference,
+    global_history_w=global_history_weight,
 )
 
 if blocked_tags:
@@ -1084,7 +342,9 @@ metric_cols[2].metric("有歌词", int(filtered_df["has_lyric"].sum()))
 metric_cols[3].metric("可播放", int(filtered_df["playable"].sum()))
 metric_cols[4].metric("平均推荐分", f"{filtered_df['dynamic_score'].mean():.1f}" if not filtered_df.empty else "0.0")
 
-tab_overview, tab_library, tab_lyrics, tab_detail = st.tabs(["推荐总览", "歌曲列表", "歌词检索", "歌曲详情"])
+tab_overview, tab_library, tab_lyrics, tab_detail, tab_history = st.tabs(
+    ["推荐总览", "歌曲列表", "歌词详情", "歌曲详情", "历史记录"]
+)
 
 with tab_overview:
     if filtered_df.empty:
@@ -1094,9 +354,24 @@ with tab_overview:
         with left:
             st.subheader("推荐候选")
             top_df = filtered_df.sort_values(["dynamic_score", "comment_total"], ascending=False).head(20)
-            st.dataframe(
+            overview_columns = [
+                "album_pic_url",
+                "选中",
+                "dynamic_score",
+                "name",
+                "artist_names",
+                "album_name",
+                "all_tags",
+                "score_breakdown",
+                "quality",
+                "duration_text",
+                "comment_total",
+                "netease_url",
+            ]
+            overview_table = make_selectable_table(
                 top_df[
                     [
+                        "song_id",
                         "album_pic_url",
                         "dynamic_score",
                         "name",
@@ -1109,9 +384,13 @@ with tab_overview:
                         "comment_total",
                         "netease_url",
                     ]
-                ],
+                ]
+            )
+            edited_overview = st.data_editor(
+                overview_table,
                 column_config={
                     "album_pic_url": st.column_config.ImageColumn("封面"),
+                    "选中": st.column_config.CheckboxColumn("选中", width="small"),
                     "dynamic_score": st.column_config.ProgressColumn(
                         "推荐分",
                         min_value=min_possible_score,
@@ -1128,38 +407,26 @@ with tab_overview:
                     "comment_total": st.column_config.NumberColumn("评论", format="%d"),
                     "netease_url": st.column_config.LinkColumn("链接", display_text="打开"),
                 },
+                column_order=overview_columns,
+                disabled=[col for col in overview_table.columns if col != "选中"],
                 hide_index=True,
                 width="stretch",
                 height=620,
+                key=f"overview-select-{current_selected_song_id()}",
             )
+            apply_table_selection(edited_overview, top_df)
 
         with right:
             st.subheader("分布画像")
-            artist_counts = top_counts(filtered_df, "artist_list", 12)
-            language_counts = top_counts(filtered_df, "language_tags", 12)
-            tag_counts = top_counts(filtered_df, "generated_tag_list", 16)
-            quality_counts = filtered_df["quality"].value_counts().rename_axis("音质").reset_index(name="数量")
-            year_counts = (
-                filtered_df.dropna(subset=["publish_year"])
-                .assign(publish_year=lambda item: item["publish_year"].astype(int))
-                .groupby("publish_year")
-                .size()
-                .reset_index(name="数量")
-            )
+            chart_tab_global, chart_tab_history = st.tabs(["全局曲库", "个人历史"])
 
-            st.caption("热门歌手")
-            st.bar_chart(artist_counts, x="名称", y="数量", height=210)
-            st.caption("智能标签")
-            st.bar_chart(tag_counts, x="名称", y="数量", height=240)
-            chart_cols = st.columns(2)
-            with chart_cols[0]:
-                st.caption("语言/场景")
-                st.bar_chart(language_counts, x="名称", y="数量", height=210)
-            with chart_cols[1]:
-                st.caption("音质")
-                st.bar_chart(quality_counts, x="音质", y="数量", height=210)
-            st.caption("发行年份")
-            st.line_chart(year_counts, x="publish_year", y="数量", height=220)
+            with chart_tab_global:
+                st.caption("数据来源：完整曲库预处理缓存")
+                render_preference_chart_grid(build_global_preference_chart_data(scoring_resources))
+
+            with chart_tab_history:
+                st.caption("数据来源：datacache/recommendation_history.json")
+                render_preference_chart_grid(build_history_preference_chart_data(history_chart_entries))
 
 with tab_library:
     if filtered_df.empty:
@@ -1199,7 +466,26 @@ with tab_library:
         page_index = page_options.index(page_label)
         display_df = sorted_df.iloc[page_index * MAX_DISPLAY : (page_index + 1) * MAX_DISPLAY].copy()
 
-        st.dataframe(
+        library_columns = [
+            "album_pic_url",
+            "选中",
+            "dynamic_score",
+            "song_id",
+            "name",
+            "artist_names",
+            "album_name",
+            "all_tags",
+            "score_breakdown",
+            "publish_date",
+            "quality",
+            "duration_text",
+            "popularity",
+            "comment_total",
+            "has_lyric",
+            "has_translation",
+            "netease_url",
+        ]
+        library_table = make_selectable_table(
             display_df[
                 [
                     "album_pic_url",
@@ -1219,9 +505,13 @@ with tab_library:
                     "has_translation",
                     "netease_url",
                 ]
-            ],
+            ]
+        )
+        edited_library = st.data_editor(
+            library_table,
             column_config={
                 "album_pic_url": st.column_config.ImageColumn("封面"),
+                "选中": st.column_config.CheckboxColumn("选中", width="small"),
                 "dynamic_score": st.column_config.ProgressColumn(
                     "推荐分",
                     min_value=min_possible_score,
@@ -1243,23 +533,27 @@ with tab_library:
                 "has_translation": "翻译",
                 "netease_url": st.column_config.LinkColumn("链接", display_text="打开"),
             },
+            column_order=library_columns,
+            disabled=[col for col in library_table.columns if col != "选中"],
             hide_index=True,
             width="stretch",
             height=650,
+            key=f"library-select-{current_selected_song_id()}-{page_index}-{sort_label}-{order_label}",
         )
+        apply_table_selection(edited_library, display_df)
+
+        st.markdown("---")
+        st.subheader("当前筛选分布画像")
+        render_dataframe_chart_section(build_dataframe_chart_data(filtered_df, prefix="当前筛选"))
 
 with tab_lyrics:
     lyric_df = filtered_df[filtered_df["full_lyric"].str.len() > 0].copy()
     if lyric_df.empty:
         st.info("当前筛选范围内没有本地歌词。")
     else:
-        lyric_df = lyric_df.sort_values(["dynamic_score", "lyrics_chars"], ascending=False)
-        options = {
-            f"{row.name} · {row.artist_names} · {row.song_id}": idx
-            for idx, row in lyric_df.head(300).iterrows()
-        }
-        selected_label = st.selectbox("选择歌词", options=list(options.keys()))
-        selected_song = lyric_df.loc[options[selected_label]]
+        selected_song, matched_selected = selected_or_first(lyric_df, ["dynamic_score", "lyrics_chars"])
+        if not matched_selected and current_selected_song_id():
+            st.caption("当前选中的歌曲不在歌词结果中，已显示当前筛选范围内推荐最高的有歌词歌曲。")
 
         st.markdown(
             f"**{safe_text(selected_song.get('name'))}** · {safe_text(selected_song.get('artist_names'))} · "
@@ -1283,10 +577,67 @@ with tab_detail:
     if filtered_df.empty:
         st.info("先调整筛选条件，选出一首歌。")
     else:
-        detail_df = filtered_df.sort_values(["dynamic_score", "comment_total"], ascending=False)
-        song_options = {
-            f"{row.name} · {row.artist_names} · {row.song_id}": idx
-            for idx, row in detail_df.head(500).iterrows()
-        }
-        selected_song_label = st.selectbox("选择歌曲", options=list(song_options.keys()))
-        render_detail(detail_df.loc[song_options[selected_song_label]])
+        selected_song, matched_selected = selected_or_first(filtered_df, ["dynamic_score", "comment_total"])
+        if not matched_selected and current_selected_song_id():
+            st.caption("当前选中的歌曲不在详情结果中，已显示当前筛选范围内推荐最高的歌曲。")
+        render_detail(selected_song)
+
+with tab_history:
+    st.subheader("历史记录")
+    st.checkbox(
+        "选中歌曲算入历史记录",
+        key=SELECTION_WRITES_HISTORY_STATE_KEY,
+        help="关闭后，勾选歌曲只会切换当前歌曲，不会新增历史偏好记录。",
+    )
+    st.caption(f"缓存最近 {HISTORY_RECOMMENDATION_CACHE_SIZE} 次选中记录，当前已保存 {len(history_entries)} 条。")
+
+    col_refresh_history, col_clear_history = st.columns(2)
+    with col_refresh_history:
+        if st.button("刷新记录", width="stretch", key="history-refresh"):
+            st.rerun()
+    with col_clear_history:
+        if st.button("清空记录", width="stretch", key="history-clear"):
+            clear_history_entries()
+            st.toast("已清空历史偏好记录", icon="✅")
+            st.rerun()
+
+    history_table = build_history_table(history_entries)
+    if history_table.empty:
+        st.info("暂时还没有保存的历史记录。")
+    else:
+        edited_history = st.data_editor(
+            history_table,
+            column_config={
+                "删除": st.column_config.CheckboxColumn("删除", width="small"),
+                "序号": st.column_config.NumberColumn("序号", format="%d", width="small"),
+                "选中时间": "选中时间",
+                "动作": "动作",
+                "歌曲ID": "歌曲ID",
+                "歌曲": "歌曲",
+                "歌手": "歌手",
+                "专辑": "专辑",
+                "标签": "标签",
+            },
+            column_order=["删除", "序号", "选中时间", "歌曲ID", "歌曲", "歌手", "专辑", "标签", "动作"],
+            disabled=[col for col in history_table.columns if col != "删除"],
+            hide_index=True,
+            width="stretch",
+            height=560,
+            key=f"history-record-editor-{len(history_entries)}",
+        )
+
+        rows_to_delete = edited_history[edited_history["删除"].fillna(False)]
+        selected_delete_count = len(rows_to_delete)
+        if st.button(
+            f"删除选中的 {selected_delete_count} 条记录",
+            width="stretch",
+            disabled=selected_delete_count == 0,
+            key="history-delete-selected",
+        ):
+            indices_to_delete = set((rows_to_delete["序号"].astype(int) - 1).tolist())
+            remaining_entries = [
+                entry for index, entry in enumerate(history_entries) if index not in indices_to_delete
+            ]
+            save_history_entries(remaining_entries)
+            st.toast(f"已删除 {selected_delete_count} 条历史记录", icon="✅")
+            st.rerun()

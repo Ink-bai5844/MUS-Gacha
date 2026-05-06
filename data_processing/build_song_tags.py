@@ -38,7 +38,19 @@ DEFAULT_MERT_EMBEDDINGS_DIR = BASE_DIR / "data" / "mert_embeddings"
 DEFAULT_MERT_INDEX = BASE_DIR / "data" / "mert_index.csv"
 DEFAULT_MERT_CLUSTERS = BASE_DIR / "data" / "mert_clusters.csv"
 DEFAULT_AUDIO_DIR = Path(r"H:\音乐")
+DEFAULT_SOURCE_SEPARATION_CHECKPOINT_DIR = BASE_DIR / "models"
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg"}
+SOURCE_SEPARATION_MODELS = {
+    "hdemucs_high_musdb_plus": {
+        "bundle": "HDEMUCS_HIGH_MUSDB_PLUS",
+        "checkpoint": DEFAULT_SOURCE_SEPARATION_CHECKPOINT_DIR / "hdemucs_high_trained.pt",
+    },
+    "hdemucs_high_musdb": {
+        "bundle": "HDEMUCS_HIGH_MUSDB",
+        "checkpoint": DEFAULT_SOURCE_SEPARATION_CHECKPOINT_DIR / "hdemucs_high_musdbhq_only.pt",
+    },
+}
+SOURCE_SEPARATION_SOURCES = ["drums", "bass", "other", "vocals"]
 
 
 LANGUAGE_TAGS = ["国语", "粤语", "英语", "日语", "韩语", "纯音乐", "华语", "欧美"]
@@ -134,6 +146,38 @@ def safe_text(value: Any) -> str:
     if isinstance(value, float) and math.isnan(value):
         return ""
     return str(value).strip()
+
+
+def progress_iter(iterable: Any, total: int | None = None, description: str = "", enabled: bool = True):
+    if not enabled:
+        yield from iterable
+        return
+
+    try:
+        from tqdm.auto import tqdm  # type: ignore
+
+        yield from tqdm(iterable, total=total, desc=description, unit="项", ncols=100)
+        return
+    except Exception:
+        pass
+
+    prefix = f"{description}: " if description else ""
+    update_every = max(1, (total or 100) // 100)
+    for index, item in enumerate(iterable, start=1):
+        if total:
+            if index == 1 or index == total or index % update_every == 0:
+                ratio_value = index / max(total, 1)
+                filled = int(ratio_value * 28)
+                bar = "#" * filled + "-" * (28 - filled)
+                sys.stderr.write(f"\r{prefix}[{bar}] {index}/{total} {ratio_value:>6.1%}")
+                sys.stderr.flush()
+        elif index == 1 or index % 50 == 0:
+            sys.stderr.write(f"\r{prefix}{index} 项")
+            sys.stderr.flush()
+        yield item
+    if total is not None or description:
+        sys.stderr.write("\n")
+        sys.stderr.flush()
 
 
 def split_pipe(value: Any) -> list[str]:
@@ -496,7 +540,143 @@ def estimate_tempo_from_onsets(onset_envelope: Any, sample_rate: int, hop_length
     return float(tempo)
 
 
+def choose_torch_device(device_name: str) -> str:
+    if device_name != "auto":
+        return device_name
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+def _load_source_separator_model(bundle: Any, checkpoint_path: Path | None) -> Any:
+    import torch
+
+    if checkpoint_path and checkpoint_path.exists():
+        model = bundle._model_factory_func()
+        state_dict = torch.load(str(checkpoint_path), map_location="cpu")
+        if isinstance(state_dict, dict) and "state_dict" in state_dict:
+            state_dict = state_dict["state_dict"]
+        model.load_state_dict(state_dict)
+        model.eval()
+        return model
+    return bundle.get_model()
+
+
+def build_source_separator(model_name: str, device_name: str, checkpoint_path: Path | None = None) -> dict[str, Any]:
+    import torchaudio
+
+    model_spec = SOURCE_SEPARATION_MODELS.get(model_name)
+    if not model_spec:
+        available = ", ".join(sorted(SOURCE_SEPARATION_MODELS))
+        raise ValueError(f"unknown source separation model {model_name!r}; choose one of: {available}")
+
+    bundle = getattr(torchaudio.pipelines, model_spec["bundle"])
+    resolved_checkpoint = checkpoint_path or model_spec["checkpoint"]
+    device = choose_torch_device(device_name)
+    model = _load_source_separator_model(bundle, resolved_checkpoint).to(device)
+    model.eval()
+    return {
+        "name": model_name,
+        "bundle": bundle,
+        "checkpoint": str(resolved_checkpoint) if resolved_checkpoint and resolved_checkpoint.exists() else "",
+        "model": model,
+        "device": device,
+        "sample_rate": int(bundle.sample_rate),
+    }
+
+
+def _fit_waveform_for_separator(waveform: Any, sample_rate: int, separator: dict[str, Any]) -> tuple[Any, int]:
+    import torch
+    import torchaudio
+
+    waveform = waveform.float()
+    target_sample_rate = separator["sample_rate"]
+    if sample_rate != target_sample_rate:
+        waveform = torchaudio.transforms.Resample(sample_rate, target_sample_rate)(waveform)
+        sample_rate = target_sample_rate
+    if waveform.shape[0] == 1:
+        waveform = waveform.repeat(2, 1)
+    elif waveform.shape[0] > 2:
+        waveform = waveform[:2]
+    peak = waveform.abs().max()
+    if bool(torch.isfinite(peak)) and float(peak) > 1.0:
+        waveform = waveform / peak
+    return waveform, sample_rate
+
+
+def estimate_sources_with_separator(
+    path: Path,
+    seconds: float,
+    separator: dict[str, Any],
+) -> dict[str, Any]:
+    import torch
+    import torchaudio
+
+    try:
+        info = torchaudio.info(str(path))
+        source_sample_rate = info.sample_rate
+        frame_count = min(info.num_frames, int(source_sample_rate * seconds)) if seconds > 0 else info.num_frames
+        waveform, sample_rate = torchaudio.load(str(path), num_frames=frame_count)
+        if waveform.numel() == 0:
+            return {"source_separation_error": "empty audio"}
+
+        waveform, sample_rate = _fit_waveform_for_separator(waveform, sample_rate, separator)
+        mixture = waveform.unsqueeze(0).to(separator["device"])
+        with torch.inference_mode():
+            estimates = separator["model"](mixture)
+
+        if estimates.ndim != 4 or estimates.shape[1] < len(SOURCE_SEPARATION_SOURCES):
+            return {"source_separation_error": f"unexpected model output shape: {tuple(estimates.shape)}"}
+
+        source_index = {name: index for index, name in enumerate(SOURCE_SEPARATION_SOURCES)}
+        source_energies = {
+            name: float(estimates[:, source_index[name]].square().mean().detach().cpu())
+            for name in SOURCE_SEPARATION_SOURCES
+        }
+        total_energy = sum(source_energies.values()) + 1e-12
+        vocal_ratio = source_energies["vocals"] / total_energy
+        instrumental_ratio = (
+            source_energies["drums"] + source_energies["bass"] + source_energies["other"]
+        ) / total_energy
+        return {
+            "source_separation_model": separator["name"],
+            "source_separation_error": "",
+            "source_drums_energy_ratio": round(source_energies["drums"] / total_energy, 4),
+            "source_bass_energy_ratio": round(source_energies["bass"] / total_energy, 4),
+            "source_other_energy_ratio": round(source_energies["other"] / total_energy, 4),
+            "source_vocals_energy_ratio": round(vocal_ratio, 4),
+            "source_vocal_energy_ratio": round(vocal_ratio, 4),
+            "source_instrumental_energy_ratio": round(instrumental_ratio, 4),
+        }
+    except Exception as exc:  # pragma: no cover - depends on local model/cache/codecs.
+        return {
+            "source_separation_model": safe_text(separator.get("name")),
+            "source_separation_error": str(exc),
+        }
+
+
 def infer_vocal_instrumental_tags(row: pd.Series) -> dict[str, Any]:
+    source_vocal_ratio = pd.to_numeric(row.get("source_vocal_energy_ratio"), errors="coerce")
+    source_instrumental_ratio = pd.to_numeric(row.get("source_instrumental_energy_ratio"), errors="coerce")
+    source_error = safe_text(row.get("source_separation_error"))
+    if pd.notna(source_vocal_ratio) and pd.notna(source_instrumental_ratio) and not source_error:
+        vocal_score = max(0.0, min(1.0, float(source_vocal_ratio)))
+        instrumental_score = max(0.0, min(1.0, float(source_instrumental_ratio)))
+        if vocal_score >= 0.34:
+            label = "人声强"
+        elif instrumental_score >= 0.78:
+            label = "器乐强"
+        else:
+            label = "人声/器乐均衡"
+        return {
+            "vocal_presence_score": round(vocal_score, 3),
+            "instrumental_presence_score": round(instrumental_score, 3),
+            "vocal_instrumental_tags": label,
+        }
+
     text = " | ".join(
         [
             safe_text(row.get("language_tags")),
@@ -626,7 +806,7 @@ def build_audio_identity_variants(path: Path) -> tuple[list[dict[str, str]], dic
     return variants, metadata
 
 
-def match_audio_files(df: pd.DataFrame, audio_dir: Path, threshold: float) -> pd.DataFrame:
+def match_audio_files(df: pd.DataFrame, audio_dir: Path, threshold: float, show_progress: bool = True) -> pd.DataFrame:
     if not audio_dir.exists():
         return pd.DataFrame(
             columns=[
@@ -647,11 +827,12 @@ def match_audio_files(df: pd.DataFrame, audio_dir: Path, threshold: float) -> pd
         )
 
     candidates = build_match_candidates(df)
+    audio_paths = [
+        path for path in audio_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
+    ]
     rows = []
-    for path in audio_dir.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in AUDIO_EXTENSIONS:
-            continue
-
+    for path in progress_iter(audio_paths, total=len(audio_paths), description="匹配本地音频", enabled=show_progress):
         identity_variants, metadata = build_audio_identity_variants(path)
 
         best_score = 0.0
@@ -733,7 +914,7 @@ def match_audio_files(df: pd.DataFrame, audio_dir: Path, threshold: float) -> pd
     return matches.sort_values(["song_id", "match_score"], ascending=[True, False]).drop_duplicates("song_id")
 
 
-def analyze_audio_file(path: Path, seconds: float) -> dict[str, Any]:
+def analyze_audio_file(path: Path, seconds: float, source_separator: dict[str, Any] | None = None, source_seconds: float = 30.0) -> dict[str, Any]:
     try:
         import torch
         import torchaudio
@@ -793,7 +974,7 @@ def analyze_audio_file(path: Path, seconds: float) -> dict[str, Any]:
         elif onset_strength and onset_strength <= 170:
             labels.append("律动弱")
 
-        return {
+        result = {
             "audio_duration_seconds": round(info.num_frames / info.sample_rate, 3) if info.sample_rate > 0 else "",
             "audio_sample_rate": sample_rate,
             "audio_rms": round(rms, 6),
@@ -806,6 +987,9 @@ def analyze_audio_file(path: Path, seconds: float) -> dict[str, Any]:
             "audio_feature_tags": " | ".join(labels),
             "audio_error": "",
         }
+        if source_separator is not None:
+            result.update(estimate_sources_with_separator(path, source_seconds, source_separator))
+        return result
     except Exception as exc:  # pragma: no cover - depends on codecs/files.
         return {"audio_error": str(exc)}
 
@@ -867,7 +1051,12 @@ def build_mert_outputs(tags_df: pd.DataFrame, args: argparse.Namespace) -> pd.Da
     mert, processor, model, device = prepare_mert_runtime(args)
     index_rows = []
 
-    for _, row in rows.iterrows():
+    for _, row in progress_iter(
+        rows.iterrows(),
+        total=len(rows),
+        description="提取 MERT",
+        enabled=not getattr(args, "no_progress", False),
+    ):
         song_id = safe_text(row.get("song_id"))
         audio_path = Path(safe_text(row.get("local_audio_path")))
         embedding_path = args.mert_embeddings_dir / f"{song_id}.npy"
@@ -955,7 +1144,12 @@ def build_mert_clusters(index_df: pd.DataFrame, args: argparse.Namespace) -> pd.
 
     embeddings = []
     song_ids = []
-    for _, row in valid.iterrows():
+    for _, row in progress_iter(
+        valid.iterrows(),
+        total=len(valid),
+        description="读取 MERT 向量",
+        enabled=not getattr(args, "no_progress", False),
+    ):
         path = Path(safe_text(row.get("mert_embedding_path")))
         if not path.exists():
             continue
@@ -998,11 +1192,19 @@ def build_mert_clusters(index_df: pd.DataFrame, args: argparse.Namespace) -> pd.
 
 
 def build_song_tags(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if args.source_separation:
+        args.analyze_audio = True
+
     df = pd.read_csv(args.input, dtype={"song_id": "string", "artist_ids": "string", "album_id": "string"})
     df.columns = [col.strip() for col in df.columns]
 
     tag_rows = []
-    for _, row in df.iterrows():
+    for _, row in progress_iter(
+        df.iterrows(),
+        total=len(df),
+        description="生成基础标签",
+        enabled=not args.no_progress,
+    ):
         song_id = safe_text(row.get("song_id"))
         lyric = read_lyric(args.lyrics_dir, song_id)
         tag_row = {
@@ -1019,7 +1221,12 @@ def build_song_tags(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFram
         matches_df = pd.read_csv(args.matches_output, dtype={"song_id": "string"})
         matches_df.columns = [col.strip() for col in matches_df.columns]
     else:
-        matches_df = match_audio_files(df, args.audio_dir, args.match_threshold)
+        matches_df = match_audio_files(
+            df,
+            args.audio_dir,
+            args.match_threshold,
+            show_progress=not args.no_progress,
+        )
     if not matches_df.empty:
         matches_df.to_csv(args.matches_output, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
         best_matches = matches_df[
@@ -1080,10 +1287,37 @@ def build_song_tags(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFram
         lambda value: " | ".join([item for item in [safe_text(value), "本地音频"] if item])
     )
 
+    source_separator = None
+    source_separator_error = ""
+    if args.source_separation:
+        try:
+            source_separator = build_source_separator(
+                args.source_separation_model,
+                args.source_separation_device,
+                args.source_separation_checkpoint,
+            )
+        except Exception as exc:
+            source_separator_error = str(exc)
+            print(f"Source separation unavailable; falling back to heuristic vocal/instrumental tags: {exc}")
+
     if args.analyze_audio:
         audio_feature_rows = []
-        for _, row in tags_df[has_audio].iterrows():
-            features = analyze_audio_file(Path(row["local_audio_path"]), args.audio_feature_seconds)
+        audio_rows = tags_df[has_audio]
+        for _, row in progress_iter(
+            audio_rows.iterrows(),
+            total=len(audio_rows),
+            description="分析音频/声源分离",
+            enabled=not args.no_progress,
+        ):
+            features = analyze_audio_file(
+                Path(row["local_audio_path"]),
+                args.audio_feature_seconds,
+                source_separator=source_separator,
+                source_seconds=args.source_separation_seconds,
+            )
+            if args.source_separation and source_separator is None:
+                features["source_separation_model"] = args.source_separation_model
+                features["source_separation_error"] = source_separator_error or "source separation unavailable"
             features["song_id"] = row["song_id"]
             audio_feature_rows.append(features)
         if audio_feature_rows:
@@ -1199,6 +1433,38 @@ def parse_args() -> argparse.Namespace:
         default=45,
         help="Seconds to load per audio file when --analyze-audio is enabled.",
     )
+    parser.add_argument(
+        "--source-separation",
+        action="store_true",
+        help="Use a pretrained HDemucs source-separation model for vocal/instrumental tags.",
+    )
+    parser.add_argument(
+        "--source-separation-model",
+        choices=sorted(SOURCE_SEPARATION_MODELS),
+        default="hdemucs_high_musdb_plus",
+        help="Torchaudio source-separation bundle used when --source-separation is enabled.",
+    )
+    parser.add_argument(
+        "--source-separation-checkpoint",
+        type=Path,
+        default=None,
+        help=(
+            "Local HDemucs checkpoint path. If omitted, the script first checks "
+            "models/hdemucs_high_trained.pt for hdemucs_high_musdb_plus or "
+            "models/hdemucs_high_musdbhq_only.pt for hdemucs_high_musdb."
+        ),
+    )
+    parser.add_argument(
+        "--source-separation-seconds",
+        type=float,
+        default=30.0,
+        help="Seconds loaded per song for source separation; lower values are faster.",
+    )
+    parser.add_argument(
+        "--source-separation-device",
+        default="auto",
+        help="Device for source separation: auto, cpu, cuda, cuda:0, etc.",
+    )
     parser.add_argument("--extract-mert", action="store_true", help="Extract MERT embeddings for matched local audio.")
     parser.add_argument("--mert-model-dir", type=Path, default=DEFAULT_MERT_MODEL_DIR, help="Local MERT model directory.")
     parser.add_argument("--mert-embeddings-dir", type=Path, default=DEFAULT_MERT_EMBEDDINGS_DIR)
@@ -1216,6 +1482,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mert-emotion-threshold", type=float, default=0.16)
     parser.add_argument("--mert-clusters", type=int, default=12)
     parser.add_argument("--mert-neighbors", type=int, default=5)
+    parser.add_argument("--no-progress", action="store_true", help="Disable progress bars.")
     return parser.parse_args()
 
 

@@ -15,7 +15,13 @@
 
 ```text
 .
-├── app.py                              # Streamlit 音乐仓库应用
+├── app.py                              # Streamlit 页面编排入口
+├── config.py                           # 路径、缓存、标签列和默认权重配置
+├── data_pipeline.py                    # 数据读取、预处理缓存、评分资源和动态评分
+├── ui_components.py                    # 页面样式和歌曲详情组件
+├── utils_core.py                       # 本地文件打开、展示字段和音质/语种辅助
+├── utils_text.py                       # 文本清洗、分词、歌词/评论语义提取
+├── utils_charts.py                     # 统计图表数据辅助
 ├── mert_emotion_demo.py                # 单曲 MERT 情绪/embedding demo
 ├── requirements.txt                    # 基础依赖
 ├── data_get/
@@ -157,6 +163,74 @@ data\lyrics
 H:\音乐
 ```
 
+### build_song_tags.py 参数详解
+
+基础输入输出：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--input` | `data\ink_bai_liked_songs.csv` | 输入歌曲主表。 |
+| `--lyrics-dir` | `data\lyrics` | 歌词目录，按 `song_id.txt` 读取。 |
+| `--audio-dir` | `H:\音乐` | 本地音乐目录，用来匹配音频文件。 |
+| `--output` | `data\song_tags.csv` | 标签主输出，Streamlit 会读取它。 |
+| `--jsonl-output` | `data\song_tags.jsonl` | JSONL 版标签输出。 |
+| `--matches-output` | `data\audio_song_matches.csv` | 本地音频匹配表输出/复用路径。 |
+
+本地音频匹配：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--match-threshold` | `0.84` | 本地音频与歌曲的模糊匹配最低分，越高越严格。 |
+| `--reuse-matches` | 关闭 | 复用已有匹配表，不重新扫描 `--audio-dir`。日常重跑建议开启。 |
+
+普通音频特征：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--analyze-audio` | 关闭 | 用 `torchaudio` 提取节奏、能量、明亮度等普通音频特征。 |
+| `--audio-feature-seconds` | `45` | 每首歌读取多少秒做普通音频分析。 |
+| `--audio-features-csv` | `data\audio_features.csv` | 音频特征 CSV 输出路径。 |
+| `--audio-features-parquet` | `data\audio_features.parquet` | 音频特征 parquet 输出路径。 |
+
+声源分离：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--source-separation` | 关闭 | 启用 HDemucs，把音频拆成 `vocals / drums / bass / other`。会自动开启音频分析。 |
+| `--source-separation-model` | `hdemucs_high_musdb_plus` | 声源分离模型。可选 `hdemucs_high_musdb_plus`、`hdemucs_high_musdb`。 |
+| `--source-separation-checkpoint` | 自动 | 本地 HDemucs 权重路径。不填时优先找 `models\hdemucs_high_trained.pt`。 |
+| `--source-separation-seconds` | `30` | 每首歌读取多少秒做声源分离。越长越稳，也越慢。 |
+| `--source-separation-device` | `auto` | 运行设备。可填 `auto`、`cpu`、`cuda`、`cuda:0`。 |
+
+MERT：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--extract-mert` | 关闭 | 提取 MERT embedding，并生成情绪、聚类和近邻信息。 |
+| `--mert-model-dir` | `MERT-v1-330M` | 本地 MERT 模型目录。 |
+| `--mert-embeddings-dir` | `data\mert_embeddings` | 每首歌 `.npy` embedding 输出目录。 |
+| `--mert-index` | `data\mert_index.csv` | MERT 索引输出。 |
+| `--mert-clusters-output` | `data\mert_clusters.csv` | MERT 聚类/近邻输出。 |
+| `--mert-limit` | `0` | 限制处理歌曲数，`0` 表示全部。小批量测试建议设为 `4` 或 `10`。 |
+| `--overwrite-mert` | 关闭 | 已有 embedding 时强制重算。 |
+| `--mert-max-seconds` | `20.0` | 每首歌最多读取多少秒给 MERT。 |
+| `--mert-chunk-seconds` | `5.0` | MERT 分块长度。 |
+| `--mert-stride-seconds` | `5.0` | MERT 分块步长。 |
+| `--mert-layer` | `mean` | MERT embedding 层/聚合设置。 |
+| `--mert-device` | `auto` | MERT 运行设备。 |
+| `--mert-fp16` | 关闭 | 使用半精度推理，GPU 上更省显存。 |
+| `--mert-top-k` | `3` | 取前几个情绪候选。 |
+| `--mert-emotion-threshold` | `0.16` | 情绪标签阈值。 |
+| `--mert-clusters` | `12` | 聚类数量上限。 |
+| `--mert-neighbors` | `5` | 每首歌保存几个近邻。 |
+
+其它：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--no-progress` | 关闭 | 关闭进度条，适合后台日志或自动化脚本。 |
+| `-h` / `--help` | 无 | 查看脚本帮助。 |
+
 ### 只生成文本/歌词/本地匹配标签
 
 ```powershell
@@ -199,10 +273,47 @@ data\audio_features.parquet
 - `audio_centroid_hz`
 - `audio_crest`
 - `audio_vocal_band_ratio`
+- `source_separation_model`
+- `source_drums_energy_ratio`
+- `source_bass_energy_ratio`
+- `source_other_energy_ratio`
+- `source_vocals_energy_ratio`
+- `source_vocal_energy_ratio`
+- `source_instrumental_energy_ratio`
 - `audio_feature_tags`
 - `vocal_presence_score`
 - `instrumental_presence_score`
 - `vocal_instrumental_tags`
+
+如果要用声源分离模型拆出人声、鼓、贝斯和其它伴奏，而不是频段启发式估计：
+
+把 HDemucs 权重放到项目目录：
+
+```text
+models\hdemucs_high_trained.pt
+```
+
+然后运行：
+
+```powershell
+python data_processing\build_song_tags.py `
+  --audio-dir "H:\音乐" `
+  --reuse-matches `
+  --source-separation `
+  --source-separation-seconds 30
+```
+
+`--source-separation` 会启用 torchaudio 的 HDemucs 模型，并自动执行音频分析。它会输出 `vocals / drums / bass / other` 四路能量占比，同时保留旧的“人声/器乐”汇总字段。默认会先读本地 `models\hdemucs_high_trained.pt`；如果文件不存在，才会走 torchaudio 的默认下载缓存。也可以显式指定：
+
+```powershell
+python data_processing\build_song_tags.py `
+  --audio-dir "H:\音乐" `
+  --reuse-matches `
+  --source-separation `
+  --source-separation-checkpoint "D:\Python\MUS-Gacha\models\hdemucs_high_trained.pt"
+```
+
+脚本默认显示进度条；需要静默运行时加 `--no-progress`。
 
 ### 生成 MERT embedding 和聚类
 
@@ -284,6 +395,18 @@ MERT 可用
 ```
 
 每个维度都有独立倍率。倍率为 `0` 时，该维度不参与推荐分。
+
+### 历史偏好加权
+
+推荐总览和歌曲列表中勾选 `选中`，以及在详情页打开本地音频时，应用会把当前歌曲画像写入：
+
+```text
+datacache/recommendation_history.json
+```
+
+默认保留最近 80 次记录。侧边栏的 `历史偏好加权` 会基于这些记录统计综合标签、语种、风格、情绪、主题、场景、音频标签、歌手、歌名关键词、歌词关键词和评论语义，并按库内稀有度给相似歌曲额外加分。
+
+历史偏好是独立分项，会出现在 `评分拆解` 的 `历史偏好` 中。`历史偏好总分倍率` 为 `0` 时不参与评分；也可以在侧边栏清空历史记录。
 
 ### 标签和单项权重
 
@@ -522,9 +645,9 @@ Format not recognised
 
 当前 `mert_emotion_tags` 是启发式标签，适合辅助检索和初筛。要做可靠情绪分类，需要准备人工标注数据并训练分类头。
 
-### 人声强/器乐强不是源分离
+### 人声强/器乐强仍然不准
 
-当前逻辑使用歌词信息、纯音乐提示和频段能量做启发式估计。它不是 Demucs、Spleeter 这类源分离模型的结果。
+如果没有开启 `--source-separation`，或模型权重下载/加载失败，脚本会退回歌词信息、纯音乐提示和频段能量的启发式估计。详情页的“声源分离”行会显示模型名、能量比例或错误信息。
 
 ### 后台启动 Streamlit 不常驻
 
