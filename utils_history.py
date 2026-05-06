@@ -3,9 +3,13 @@ import math
 from collections import Counter
 from datetime import datetime, timezone
 
-from config import HISTORY_CACHE_FILE, HISTORY_RECOMMENDATION_CACHE_SIZE
+from config import HISTORY_CACHE_FILE, HISTORY_RECOMMENDATION_CACHE_SIZE, HISTORY_SETTINGS_FILE
 from utils_text import safe_text
 
+
+DEFAULT_HISTORY_SETTINGS = {
+    "selection_writes_history": True,
+}
 
 HISTORY_FEATURES = {
     "all_tags": "generated_tag_list",
@@ -73,6 +77,49 @@ def save_history_entries(entries):
 
 def clear_history_entries():
     return save_history_entries([])
+
+
+def load_history_settings():
+    settings = DEFAULT_HISTORY_SETTINGS.copy()
+    if not HISTORY_SETTINGS_FILE.exists():
+        return settings
+    try:
+        saved_settings = json.loads(HISTORY_SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return settings
+    if not isinstance(saved_settings, dict):
+        return settings
+
+    if "selection_writes_history" in saved_settings:
+        settings["selection_writes_history"] = bool(saved_settings["selection_writes_history"])
+    return settings
+
+
+def save_history_settings(settings):
+    merged_settings = DEFAULT_HISTORY_SETTINGS.copy()
+    if isinstance(settings, dict):
+        merged_settings.update(
+            {
+                "selection_writes_history": bool(
+                    settings.get(
+                        "selection_writes_history",
+                        DEFAULT_HISTORY_SETTINGS["selection_writes_history"],
+                    )
+                )
+            }
+        )
+
+    HISTORY_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = HISTORY_SETTINGS_FILE.with_suffix(f"{HISTORY_SETTINGS_FILE.suffix}.tmp")
+    temp_file.write_text(json.dumps(merged_settings, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_file.replace(HISTORY_SETTINGS_FILE)
+    return merged_settings
+
+
+def save_selection_writes_history(enabled):
+    settings = load_history_settings()
+    settings["selection_writes_history"] = bool(enabled)
+    return save_history_settings(settings)
 
 
 def build_history_entry(row_data, action):

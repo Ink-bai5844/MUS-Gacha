@@ -18,8 +18,10 @@ from utils_charts import (
 from utils_history import (
     build_history_preference_maps,
     clear_history_entries,
+    load_history_settings,
     load_history_entries,
     record_recommendation_history,
+    save_selection_writes_history,
     save_history_entries,
 )
 from utils_text import safe_text
@@ -113,9 +115,16 @@ def build_history_table(history_entries):
     return pd.DataFrame(rows)
 
 
+def persist_selection_history_setting():
+    save_selection_writes_history(st.session_state.get(SELECTION_WRITES_HISTORY_STATE_KEY, True))
+
+
 st.set_page_config(page_title="墨白的音乐仓库", layout="wide")
 render_page_style()
-st.session_state.setdefault(SELECTION_WRITES_HISTORY_STATE_KEY, True)
+if SELECTION_WRITES_HISTORY_STATE_KEY not in st.session_state:
+    st.session_state[SELECTION_WRITES_HISTORY_STATE_KEY] = load_history_settings()[
+        "selection_writes_history"
+    ]
 
 
 with st.spinner("正在同步预处理缓存与评分资源..."):
@@ -588,6 +597,7 @@ with tab_history:
         "选中歌曲算入历史记录",
         key=SELECTION_WRITES_HISTORY_STATE_KEY,
         help="关闭后，勾选歌曲只会切换当前歌曲，不会新增历史偏好记录。",
+        on_change=persist_selection_history_setting,
     )
     st.caption(f"缓存最近 {HISTORY_RECOMMENDATION_CACHE_SIZE} 次选中记录，当前已保存 {len(history_entries)} 条。")
 

@@ -5,12 +5,15 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = BASE_DIR / "data" / "ink_bai_liked_songs.csv"
 LYRICS_DIR = BASE_DIR / "data" / "lyrics"
 TAGS_FILE = BASE_DIR / "data" / "song_tags.csv"
+MERT_INDEX_FILE = BASE_DIR / "data" / "mert_index.csv"
+MERT_CLUSTERS_FILE = BASE_DIR / "data" / "mert_clusters.csv"
 CACHE_DIR = BASE_DIR / "datacache"
 PREPROCESSED_DATA_FILE = CACHE_DIR / "preprocessed_music.pkl"
 PREPROCESSED_HASH_FILE = CACHE_DIR / "data.hash"
 PREPROCESS_CACHE_VERSION = "mus-gacha-preprocess-v1"
 MAX_DISPLAY = 60
 HISTORY_CACHE_FILE = CACHE_DIR / "recommendation_history.json"
+HISTORY_SETTINGS_FILE = CACHE_DIR / "history_settings.json"
 HISTORY_RECOMMENDATION_CACHE_SIZE = 80
 
 INITIAL_TAG_WEIGHTS = {

@@ -13,6 +13,8 @@ from config import (
     DATA_FILE,
     GENERATED_TAG_COLUMNS,
     LYRICS_DIR,
+    MERT_CLUSTERS_FILE,
+    MERT_INDEX_FILE,
     PREPROCESS_CACHE_VERSION,
     PREPROCESSED_DATA_FILE,
     PREPROCESSED_HASH_FILE,
@@ -41,16 +43,64 @@ def minmax(series, index=None):
 
 
 def load_generated_tags():
-    if not TAGS_FILE.exists():
+    if TAGS_FILE.exists():
+        tags_df = pd.read_csv(TAGS_FILE, dtype={"song_id": "string"})
+        tags_df.columns = [col.strip() for col in tags_df.columns]
+        if "language_tags" in tags_df.columns:
+            tags_df = tags_df.rename(columns={"language_tags": "generated_language_tags"})
+
+        keep_columns = ["song_id"] + [col for col in GENERATED_TAG_COLUMNS if col in tags_df.columns]
+        tags_df = tags_df[keep_columns].drop_duplicates("song_id")
+    else:
+        tags_df = pd.DataFrame()
+
+    mert_df = load_mert_tags()
+    if mert_df.empty:
+        return tags_df
+    if tags_df.empty:
+        return mert_df
+
+    merged_df = tags_df.merge(mert_df, on="song_id", how="outer", suffixes=("", "_mert_source"))
+    for col in [item for item in GENERATED_TAG_COLUMNS if item in mert_df.columns]:
+        source_col = f"{col}_mert_source"
+        if source_col not in merged_df.columns:
+            continue
+        if col in merged_df.columns:
+            has_value = merged_df[col].fillna("").astype(str).str.len().gt(0)
+            merged_df[col] = merged_df[col].where(has_value, merged_df[source_col])
+        else:
+            merged_df[col] = merged_df[source_col]
+        merged_df = merged_df.drop(columns=[source_col])
+
+    keep_columns = ["song_id"] + [col for col in GENERATED_TAG_COLUMNS if col in merged_df.columns]
+    return merged_df[keep_columns].drop_duplicates("song_id")
+
+
+def load_mert_tags():
+    mert_frames = []
+    for path in [MERT_INDEX_FILE, MERT_CLUSTERS_FILE]:
+        if not path.exists():
+            continue
+        mert_df = pd.read_csv(path, dtype={"song_id": "string"})
+        mert_df.columns = [col.strip() for col in mert_df.columns]
+        keep_columns = ["song_id"] + [col for col in GENERATED_TAG_COLUMNS if col in mert_df.columns]
+        mert_frames.append(mert_df[keep_columns].drop_duplicates("song_id"))
+
+    if not mert_frames:
         return pd.DataFrame()
 
-    tags_df = pd.read_csv(TAGS_FILE, dtype={"song_id": "string"})
-    tags_df.columns = [col.strip() for col in tags_df.columns]
-    if "language_tags" in tags_df.columns:
-        tags_df = tags_df.rename(columns={"language_tags": "generated_language_tags"})
+    merged_df = mert_frames[0]
+    for frame in mert_frames[1:]:
+        merged_df = merged_df.merge(frame, on="song_id", how="outer", suffixes=("", "_mert_source"))
+        for col in [item for item in GENERATED_TAG_COLUMNS if f"{item}_mert_source" in merged_df.columns]:
+            if col in merged_df.columns:
+                has_value = merged_df[col].fillna("").astype(str).str.len().gt(0)
+                merged_df[col] = merged_df[col].where(has_value, merged_df[f"{col}_mert_source"])
+            else:
+                merged_df[col] = merged_df[f"{col}_mert_source"]
+            merged_df = merged_df.drop(columns=[f"{col}_mert_source"])
 
-    keep_columns = ["song_id"] + [col for col in GENERATED_TAG_COLUMNS if col in tags_df.columns]
-    return tags_df[keep_columns].drop_duplicates("song_id")
+    return merged_df.drop_duplicates("song_id")
 
 
 def filter_by_keywords(df, query):
@@ -155,7 +205,7 @@ def get_preprocess_data_hash():
     hasher = hashlib.md5()
     hasher.update(PREPROCESS_CACHE_VERSION.encode("utf-8"))
 
-    for path in [DATA_FILE, TAGS_FILE]:
+    for path in [DATA_FILE, TAGS_FILE, MERT_INDEX_FILE, MERT_CLUSTERS_FILE]:
         update_path_signature(hasher, path)
 
     if LYRICS_DIR.exists():
@@ -387,11 +437,7 @@ def build_preprocessed_music_data():
 
 
 @st.cache_data(max_entries=1, show_spinner=False)
-
-
-def load_music_data():
-    current_hash = get_preprocess_data_hash()
-
+def _load_music_data_for_hash(current_hash):
     if PREPROCESSED_DATA_FILE.exists() and PREPROCESSED_HASH_FILE.exists():
         saved_hash = PREPROCESSED_HASH_FILE.read_text(encoding="utf-8").strip()
         if saved_hash == current_hash:
@@ -419,3 +465,7 @@ def load_music_data():
         )
     PREPROCESSED_HASH_FILE.write_text(current_hash, encoding="utf-8")
     return df, scoring_resources
+
+
+def load_music_data():
+    return _load_music_data_for_hash(get_preprocess_data_hash())
