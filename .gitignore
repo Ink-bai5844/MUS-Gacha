@@ -3,3 +3,7 @@
 /data
 /MERT-v1-330M
 /__pycache__
+__pycache__/
+*.log
+/.cache
+/datacache
