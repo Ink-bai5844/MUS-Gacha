@@ -30,16 +30,16 @@
 │   ├── qcloud_song_store.py            # 抓取网易云歌曲 JSON
 │   └── retry_rate_limited_songs.py     # 重试“操作频繁”的 JSON 快照
 ├── data_processing/
-│   ├── export_liked_json_to_csv.py     # JSON 导出 CSV/歌词
+│   ├── export_original_json_to_csv.py  # JSON 导出 CSV/歌词
 │   └── build_song_tags.py              # 多源融合打标签
 ├── datacache/                          # Streamlit 预处理缓存
 ├── data/
 │   ├── source/                         # 源数据：JSON、SQLite、可聚合歌曲 CSV、歌词
-│   │   ├── ink_bai_liked_json/         # 每首歌的原始 JSON
+│   │   ├── xxxxxxxxx_json/             # 每首歌的原始 JSON
 │   │   ├── lyrics/                     # song_id.txt 歌词
 │   │   ├── *.csv                       # 应用会读取全部 CSV 并按 song_id 去重
-│   │   ├── ink_bai_liked_songs.csv     # 默认导出的歌曲 CSV
-│   │   └── ink_bai_liked.sqlite3       # 抓取缓存数据库
+│   │   ├── xxxxxxxxx_songs.csv         # 默认导出的歌曲 CSV
+│   │   └── xxxxxxxxx.sqlite3           # 抓取缓存数据库
 │   ├── tags/                           # 标签输出
 │   │   ├── song_tags.csv               # 标签主输出
 │   │   └── song_tags.jsonl             # JSONL 标签输出
@@ -122,7 +122,7 @@ http://localhost:8501
 
 ### 1. 抓取歌曲 JSON
 
-如果已经有 `data/source/ink_bai_liked_json`，可以跳过。
+如果已经有 `data/source/ink_baixxxxxx_json`，可以跳过。
 
 按自己的网易云喜欢歌单名抓取：
 
@@ -130,8 +130,8 @@ http://localhost:8501
 python data_get\qcloud_song_store.py `
   --my-playlist-name "Ink_bai喜欢的音乐" `
   --cookie-file cookie.txt `
-  --json-dir data\source\ink_bai_liked_json `
-  --db data\source\ink_bai_liked.sqlite3
+  --json-dir data\source\ink_baixxxxxx_json `
+  --db data\source\ink_baixxxxxx.sqlite3
 ```
 
 也可以按歌单 ID 抓取：
@@ -139,8 +139,8 @@ python data_get\qcloud_song_store.py `
 ```powershell
 python data_get\qcloud_song_store.py `
   --playlist-id 你的歌单ID `
-  --json-dir data\source\ink_bai_liked_json `
-  --db data\source\ink_bai_liked.sqlite3
+  --json-dir data\source\ink_baixxxxxx_json `
+  --db data\source\ink_baixxxxxx.sqlite3
 ```
 
 更详细的抓取说明见 `QCloudSongStore_README.md`。
@@ -148,18 +148,18 @@ python data_get\qcloud_song_store.py `
 ### 2. 导出 CSV 和歌词
 
 ```powershell
-python data_processing\export_liked_json_to_csv.py `
-  --input-dir data\source\ink_bai_liked_json `
-  --output data\source\ink_bai_liked_songs.csv `
+python data_processing\exportxxxxxx_json_to_csv.py `
+  --input-dir data\source\ink_baixxxxxx_json `
+  --output data\source\ink_baixxxxxx_songs.csv `
   --lyrics-dir data\source\lyrics
 ```
 
 如果希望 CSV 里也包含完整歌词列：
 
 ```powershell
-python data_processing\export_liked_json_to_csv.py `
-  --input-dir data\source\ink_bai_liked_json `
-  --output data\source\ink_bai_liked_songs.csv `
+python data_processing\exportxxxxxx_json_to_csv.py `
+  --input-dir data\source\ink_baixxxxxx_json `
+  --output data\source\ink_baixxxxxx_songs.csv `
   --lyrics-dir data\source\lyrics `
   --include-lyrics
 ```
@@ -179,7 +179,7 @@ data_processing\build_song_tags.py
 默认输入：
 
 ```text
-data\source\ink_bai_liked_songs.csv
+data\source\ink_baixxxxxx_songs.csv
 data\source\lyrics
 H:\音乐
 ```
@@ -192,7 +192,7 @@ H:\音乐
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `--input` | `data\source\ink_bai_liked_songs.csv` | 输入歌曲 CSV。 |
+| `--input` | `data\source\ink_baixxxxxx_songs.csv` | 输入歌曲 CSV。 |
 | `--lyrics-dir` | `data\source\lyrics` | 歌词目录，按 `song_id.txt` 读取。 |
 | `--audio-dir` | `H:\音乐` | 本地音乐目录，用来匹配音频文件。 |
 | `--output` | `data\tags\song_tags.csv` | 标签主输出，Streamlit 会读取它。 |
@@ -637,7 +637,7 @@ python data_processing\build_song_tags.py --audio-dir "H:\音乐" --reuse-matche
 
 ```powershell
 python data_processing\build_song_tags.py --help
-python data_processing\export_liked_json_to_csv.py --help
+python data_processing\exportxxxxxx_json_to_csv.py --help
 python data_get\qcloud_song_store.py --help
 python mert_emotion_demo.py --help
 ```
@@ -697,3 +697,7 @@ python data_processing\build_song_tags.py --audio-dir "H:\音乐" --reuse-matche
 ```
 
 然后重新打开或刷新 Streamlit 页面。
+
+## 致谢
+
+本项目的网易云音乐数据采集能力基于 [QCloudMusicApi](https://github.com/s12mmm3/QCloudMusicApi)。感谢原项目提供的接口封装与本地调用能力。

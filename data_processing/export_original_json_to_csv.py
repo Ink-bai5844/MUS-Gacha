@@ -4,7 +4,7 @@ Export per-song QCloudMusicApi JSON snapshots into one flat CSV table.
 
 The default input and output paths match the current project layout:
 
-    python export_liked_json_to_csv.py
+    python export_original_json_to_csv.py
 
 Songs marked by the API as "no copyright available" are skipped by default.
 """

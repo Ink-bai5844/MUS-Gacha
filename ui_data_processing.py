@@ -557,7 +557,7 @@ def render_csv_tools() -> None:
 
             command = [
                 PYTHON,
-                str(PROJECT_ROOT / "data_processing" / "export_liked_json_to_csv.py"),
+                str(PROJECT_ROOT / "data_processing" / "export_original_json_to_csv.py"),
                 "--input-dir",
                 input_dir,
                 "--output",
