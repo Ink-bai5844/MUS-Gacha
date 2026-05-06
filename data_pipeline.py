@@ -10,7 +10,6 @@ import streamlit as st
 from config import (
     BASE_DIR,
     CACHE_DIR,
-    DATA_FILE,
     GENERATED_TAG_COLUMNS,
     LYRICS_DIR,
     MERT_CLUSTERS_FILE,
@@ -19,6 +18,7 @@ from config import (
     PREPROCESSED_DATA_FILE,
     PREPROCESSED_HASH_FILE,
     TAGS_FILE,
+    SOURCE_DATA_DIR,
     TEXT_COLUMNS,
 )
 from utils_core import build_search_text, extract_language_tags, preferred_quality, read_lyric
@@ -121,6 +121,53 @@ def frequency_counter(series):
     return counter
 
 
+def get_source_csv_paths():
+    if not SOURCE_DATA_DIR.exists():
+        return []
+    return sorted(path for path in SOURCE_DATA_DIR.glob("*.csv") if path.is_file())
+
+
+def load_source_music_csvs():
+    source_paths = get_source_csv_paths()
+    if not source_paths:
+        return pd.DataFrame()
+
+    frames = []
+    for source_order, path in enumerate(source_paths):
+        frame = pd.read_csv(
+            path,
+            dtype={"song_id": "string", "artist_ids": "string", "album_id": "string"},
+        )
+        frame.columns = [col.strip() for col in frame.columns]
+        frame["source_csv"] = path.name
+        frame["_source_csv_order"] = source_order
+        frame["_source_row_order"] = range(len(frame))
+        frames.append(frame)
+
+    df = pd.concat(frames, ignore_index=True, sort=False)
+    if "song_id" not in df.columns:
+        return pd.DataFrame()
+
+    df["song_id"] = df["song_id"].astype("string").str.strip()
+    df = df[df["song_id"].fillna("").ne("")]
+    if df.empty:
+        return pd.DataFrame()
+
+    text_df = df.fillna("").astype(str).apply(lambda column: column.str.strip())
+    df["_source_row_completeness"] = text_df.ne("").sum(axis=1)
+    df = (
+        df.sort_values(
+            ["song_id", "_source_row_completeness", "_source_csv_order", "_source_row_order"],
+            kind="stable",
+        )
+        .drop_duplicates("song_id", keep="last")
+        .sort_values(["_source_csv_order", "_source_row_order"], kind="stable")
+        .drop(columns=["_source_csv_order", "_source_row_order", "_source_row_completeness"])
+        .reset_index(drop=True)
+    )
+    return df
+
+
 def feature_base_scores(counter):
     return {name: math.log1p(count) * 10.0 for name, count in counter.items()}
 
@@ -205,7 +252,12 @@ def get_preprocess_data_hash():
     hasher = hashlib.md5()
     hasher.update(PREPROCESS_CACHE_VERSION.encode("utf-8"))
 
-    for path in [DATA_FILE, TAGS_FILE, MERT_INDEX_FILE, MERT_CLUSTERS_FILE]:
+    source_csv_paths = get_source_csv_paths()
+    hasher.update(str(len(source_csv_paths)).encode("utf-8"))
+    for path in source_csv_paths:
+        update_path_signature(hasher, path)
+
+    for path in [TAGS_FILE, MERT_INDEX_FILE, MERT_CLUSTERS_FILE]:
         update_path_signature(hasher, path)
 
     if LYRICS_DIR.exists():
@@ -363,11 +415,9 @@ def apply_dynamic_music_scores(
 
 
 def build_preprocessed_music_data():
-    if not DATA_FILE.exists():
+    df = load_source_music_csvs()
+    if df.empty:
         return pd.DataFrame(), build_empty_scoring_resources()
-
-    df = pd.read_csv(DATA_FILE, dtype={"song_id": "string", "artist_ids": "string", "album_id": "string"})
-    df.columns = [col.strip() for col in df.columns]
 
     for col in TEXT_COLUMNS + ["song_id", "album_pic_url", "duration_text", "publish_date"]:
         if col in df.columns:

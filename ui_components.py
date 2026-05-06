@@ -149,7 +149,7 @@ def render_detail(song):
             ],
             columns=["字段", "内容"],
         )
-        st.dataframe(info, hide_index=True, width="stretch", height=550)
+        st.dataframe(info, hide_index=True, width="stretch", height=630)
 
     lyric = safe_text(song.get("full_lyric", "")) or safe_text(song.get("lyric_excerpt", ""))
     if lyric:

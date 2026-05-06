@@ -1,13 +1,13 @@
-import html
 import math
 import re
 
 import pandas as pd
 import streamlit as st
 
-from config import DATA_FILE, HISTORY_RECOMMENDATION_CACHE_SIZE, INITIAL_TAG_WEIGHTS, MAX_DISPLAY
+from config import HISTORY_RECOMMENDATION_CACHE_SIZE, INITIAL_TAG_WEIGHTS, MAX_DISPLAY, SOURCE_DATA_DIR
 from data_pipeline import apply_dynamic_music_scores, filter_by_keywords, load_music_data
 from ui_components import render_detail, render_page_style
+from ui_data_processing import render_data_processing_interface
 from utils_charts import (
     build_dataframe_chart_data,
     build_global_preference_chart_data,
@@ -133,7 +133,7 @@ with st.spinner("正在同步预处理缓存与评分资源..."):
 st.sidebar.title("筛选与推荐")
 
 if df_base.empty:
-    st.error(f"未找到数据文件：{DATA_FILE}")
+    st.error(f"未在 {SOURCE_DATA_DIR} 找到可读取的 CSV 数据。")
     st.stop()
 
 search_kw = st.sidebar.text_input("实时检索", placeholder="歌名 / 歌手 / 专辑 / 歌词 / 评论")
@@ -351,8 +351,8 @@ metric_cols[2].metric("有歌词", int(filtered_df["has_lyric"].sum()))
 metric_cols[3].metric("可播放", int(filtered_df["playable"].sum()))
 metric_cols[4].metric("平均推荐分", f"{filtered_df['dynamic_score'].mean():.1f}" if not filtered_df.empty else "0.0")
 
-tab_overview, tab_library, tab_lyrics, tab_detail, tab_history = st.tabs(
-    ["推荐总览", "歌曲列表", "歌词详情", "歌曲详情", "历史记录"]
+tab_overview, tab_library, tab_detail, tab_history, tab_data_processing = st.tabs(
+    ["推荐总览", "歌曲列表", "歌曲详情", "历史记录", "数据处理"]
 )
 
 with tab_overview:
@@ -555,33 +555,6 @@ with tab_library:
         st.subheader("当前筛选分布画像")
         render_dataframe_chart_section(build_dataframe_chart_data(filtered_df, prefix="当前筛选"))
 
-with tab_lyrics:
-    lyric_df = filtered_df[filtered_df["full_lyric"].str.len() > 0].copy()
-    if lyric_df.empty:
-        st.info("当前筛选范围内没有本地歌词。")
-    else:
-        selected_song, matched_selected = selected_or_first(lyric_df, ["dynamic_score", "lyrics_chars"])
-        if not matched_selected and current_selected_song_id():
-            st.caption("当前选中的歌曲不在歌词结果中，已显示当前筛选范围内推荐最高的有歌词歌曲。")
-
-        st.markdown(
-            f"**{safe_text(selected_song.get('name'))}** · {safe_text(selected_song.get('artist_names'))} · "
-            f"{int(selected_song.get('lyric_line_count', 0))} 行"
-        )
-
-        lyric = safe_text(selected_song.get("full_lyric", ""))
-        if lyrics_kw:
-            for term in [term.strip() for term in re.split(r"[,，\s]+", lyrics_kw) if term.strip()]:
-                lyric = re.sub(
-                    re.escape(term),
-                    lambda match: f"<mark>{html.escape(match.group(0))}</mark>",
-                    html.escape(lyric),
-                    flags=re.IGNORECASE,
-                )
-            st.markdown(f"<div class='lyric-box'>{lyric}</div>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<div class='lyric-box'>{html.escape(lyric)}</div>", unsafe_allow_html=True)
-
 with tab_detail:
     if filtered_df.empty:
         st.info("先调整筛选条件，选出一首歌。")
@@ -651,3 +624,6 @@ with tab_history:
             save_history_entries(remaining_entries)
             st.toast(f"已删除 {selected_delete_count} 条历史记录", icon="✅")
             st.rerun()
+
+with tab_data_processing:
+    render_data_processing_interface()

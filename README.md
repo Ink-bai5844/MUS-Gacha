@@ -5,11 +5,12 @@
 当前项目已经支持：
 
 - 从网易云歌曲 JSON 导出主 CSV 和歌词文件。
-- 从 `data/source/ink_bai_liked_songs.csv`、`data/source/lyrics`、`H:\音乐` 融合生成标签。
+- 启动时自动汇总读取 `data/source/*.csv`，按 `song_id` 去重后进入曲库。
+- 从源 CSV、`data/source/lyrics`、`H:\音乐` 融合生成标签。
 - 匹配本地音频到 `song_id`，支持一键打开本地文件。
 - 提取音频特征：节奏、能量、明亮度、动态、人声/器乐估计。
 - 批量提取 MERT embedding，生成聚类、近邻歌曲和启发式情绪标签。
-- 在 Streamlit 页面中浏览、筛选、查看歌词、播放本地音频。
+- 在 Streamlit 页面中浏览、筛选、查看歌曲详情、播放本地音频，并从“数据处理”页执行采集、导出、打标签和缓存维护。
 
 ## 目录结构
 
@@ -19,22 +20,25 @@
 ├── config.py                           # 路径、缓存、标签列和默认权重配置
 ├── data_pipeline.py                    # 数据读取、预处理缓存、评分资源和动态评分
 ├── ui_components.py                    # 页面样式和歌曲详情组件
+├── ui_data_processing.py               # Streamlit 数据处理页
 ├── utils_core.py                       # 本地文件打开、展示字段和音质/语种辅助
 ├── utils_text.py                       # 文本清洗、分词、歌词/评论语义提取
 ├── utils_charts.py                     # 统计图表数据辅助
 ├── mert_emotion_demo.py                # 单曲 MERT 情绪/embedding demo
 ├── requirements.txt                    # 基础依赖
 ├── data_get/
-│   └── qcloud_song_store.py            # 抓取网易云歌曲 JSON
+│   ├── qcloud_song_store.py            # 抓取网易云歌曲 JSON
+│   └── retry_rate_limited_songs.py     # 重试“操作频繁”的 JSON 快照
 ├── data_processing/
 │   ├── export_liked_json_to_csv.py     # JSON 导出 CSV/歌词
 │   └── build_song_tags.py              # 多源融合打标签
 ├── datacache/                          # Streamlit 预处理缓存
 ├── data/
-│   ├── source/                         # 源数据：JSON、SQLite、歌曲主表、歌词
+│   ├── source/                         # 源数据：JSON、SQLite、可聚合歌曲 CSV、歌词
 │   │   ├── ink_bai_liked_json/         # 每首歌的原始 JSON
 │   │   ├── lyrics/                     # song_id.txt 歌词
-│   │   ├── ink_bai_liked_songs.csv     # 歌曲主表
+│   │   ├── *.csv                       # 应用会读取全部 CSV 并按 song_id 去重
+│   │   ├── ink_bai_liked_songs.csv     # 默认导出的歌曲 CSV
 │   │   └── ink_bai_liked.sqlite3       # 抓取缓存数据库
 │   ├── tags/                           # 标签输出
 │   │   ├── song_tags.csv               # 标签主输出
@@ -81,7 +85,7 @@ pip install scikit-learn pyarrow mutagen
 
 ## 快速启动应用
 
-已有 `data/source/ink_bai_liked_songs.csv` 和 `data/tags/song_tags.csv` 时，直接启动：
+已有至少一个 `data/source/*.csv` 和可选的 `data/tags/song_tags.csv` 时，直接启动：
 
 ```powershell
 streamlit run app.py
@@ -98,15 +102,21 @@ http://localhost:8501
 - 实时检索歌名、歌手、专辑、歌词、评论。
 - 按歌手、语言、智能标签、音质、年份等筛选。
 - 按 XP-Gacha 风格动态调节推荐评分：全局维度倍率、标签屏蔽、单标签权重、歌手权重、歌名关键词权重、歌词关键词权重、评论语义权重。
-- 查看推荐总览、歌曲列表、歌词检索、歌曲详情。
+- 查看推荐总览、歌曲列表、歌曲详情、历史记录和数据处理页。
 - 查看每首歌的评分拆解、歌词关键词、评论语义、本地音频/MERT 信息。
 - 有本地音频时显示本地播放条，并可点击“打开本地音频”调用系统默认播放器。
+- 侧边栏的“歌词专项检索”会在完整歌词中筛选歌曲；选中歌曲后可在歌曲详情里查看歌词。
+- “数据处理”页提供采集入口、JSON 导 CSV/歌词、标签/音频/MERT 处理和缓存清理。
 
 ### 预处理缓存
 
-应用启动时会根据 `data/source/ink_bai_liked_songs.csv`、`data/tags/song_tags.csv`、`data/features/mert/mert_index.csv`、`data/features/mert/mert_clusters.csv`、`data/source/lyrics/*.txt` 和预处理缓存版本生成哈希。哈希命中时，Streamlit 会直接读取 `datacache/preprocessed_music.pkl`，跳过 CSV 合并、歌词读取、分词、评论语义标签和评分资源重建。
+应用启动时会根据 `data/source/*.csv`、`data/tags/song_tags.csv`、`data/features/mert/mert_index.csv`、`data/features/mert/mert_clusters.csv`、`data/source/lyrics/*.txt` 和预处理缓存版本生成哈希。哈希命中时，Streamlit 会直接读取 `datacache/preprocessed_music.pkl`，跳过源 CSV 汇总、歌词读取、分词、评论语义标签和评分资源重建。
 
-当主 CSV、标签 CSV 或歌词文件发生变化时，`datacache/data.hash` 会失效，下一次启动会自动重建预处理缓存。若缓存结构升级导致异常，可删除 `datacache/` 后重新运行 `streamlit run app.py`。
+当任意源 CSV、标签 CSV、MERT 输出或歌词文件发生变化时，`datacache/data.hash` 会失效，下一次启动会自动重建预处理缓存。若缓存结构升级导致异常，可删除 `datacache/` 后重新运行 `streamlit run app.py`。
+
+### 源 CSV 汇总规则
+
+应用会扫描 `data/source` 目录下所有 `.csv` 文件并拼接成曲库。去重依据是 `song_id`：同一首歌在多个 CSV 中出现时，会优先保留非空字段更多的记录；完整度相同则保留排序靠后的源文件/行。最终保留的源文件名会写入运行时字段 `source_csv`，方便追溯。
 
 ## 数据准备
 
@@ -154,6 +164,10 @@ python data_processing\export_liked_json_to_csv.py `
   --include-lyrics
 ```
 
+导出的 CSV 只要放在 `data/source` 下，就会被应用自动纳入汇总。多个 CSV 同时存在时不需要手动合并，应用会在启动时按 `song_id` 去重。
+
+也可以直接在 Streamlit 的“数据处理”页完成这两步：进入“数据采集”执行网易云抓取或限流重试，进入“CSV/歌词”把 JSON 快照导出成 CSV 和歌词文件。
+
 ## 生成标签
 
 标签生成脚本是：
@@ -170,13 +184,15 @@ data\source\lyrics
 H:\音乐
 ```
 
+注意：Streamlit 曲库会读取 `data/source/*.csv` 的汇总结果，但 `build_song_tags.py` 的 `--input` 仍然是显式指定一个 CSV。新增多个源 CSV 后，如果希望这些歌曲也有智能标签、本地音频匹配或 MERT 信息，需要对包含这些歌曲的 CSV 运行标签流程，或维护一个用于打标签的汇总 CSV。
+
 ### build_song_tags.py 参数详解
 
 基础输入输出：
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `--input` | `data\source\ink_bai_liked_songs.csv` | 输入歌曲主表。 |
+| `--input` | `data\source\ink_bai_liked_songs.csv` | 输入歌曲 CSV。 |
 | `--lyrics-dir` | `data\source\lyrics` | 歌词目录，按 `song_id.txt` 读取。 |
 | `--audio-dir` | `H:\音乐` | 本地音乐目录，用来匹配音频文件。 |
 | `--output` | `data\tags\song_tags.csv` | 标签主输出，Streamlit 会读取它。 |
