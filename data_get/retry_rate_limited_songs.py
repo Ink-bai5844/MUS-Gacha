@@ -29,8 +29,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Re-crawl songs whose JSON snapshots contain a rate-limit marker."
     )
-    parser.add_argument("--json-dir", default="data/ink_bai_liked_json")
-    parser.add_argument("--db", default="data/ink_bai_liked.sqlite3")
+    parser.add_argument("--json-dir", default="data/source/ink_bai_liked_json")
+    parser.add_argument("--db", default="data/source/ink_bai_liked.sqlite3")
     parser.add_argument("--library", default="QCloudMusicApi/build/QCloudMusicApi/QCloudMusicApi.dll")
     parser.add_argument("--cookie-file", default="cookie.txt")
     parser.add_argument("--marker", default=DEFAULT_MARKER)

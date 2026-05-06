@@ -1,10 +1,9 @@
 /.vscode
 /cookie.txt
 /data
-/MERT-v1-330M
+/models/
 /__pycache__
 __pycache__/
 *.log
 /.cache
 /datacache
-/models

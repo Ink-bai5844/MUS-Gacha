@@ -26,17 +26,22 @@ import pandas as pd
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT = BASE_DIR / "data" / "ink_bai_liked_songs.csv"
-DEFAULT_LYRICS_DIR = BASE_DIR / "data" / "lyrics"
-DEFAULT_OUTPUT = BASE_DIR / "data" / "song_tags.csv"
-DEFAULT_JSONL = BASE_DIR / "data" / "song_tags.jsonl"
-DEFAULT_MATCHES = BASE_DIR / "data" / "audio_song_matches.csv"
-DEFAULT_AUDIO_FEATURES_CSV = BASE_DIR / "data" / "audio_features.csv"
-DEFAULT_AUDIO_FEATURES_PARQUET = BASE_DIR / "data" / "audio_features.parquet"
-DEFAULT_MERT_MODEL_DIR = BASE_DIR / "MERT-v1-330M"
-DEFAULT_MERT_EMBEDDINGS_DIR = BASE_DIR / "data" / "mert_embeddings"
-DEFAULT_MERT_INDEX = BASE_DIR / "data" / "mert_index.csv"
-DEFAULT_MERT_CLUSTERS = BASE_DIR / "data" / "mert_clusters.csv"
+DATA_DIR = BASE_DIR / "data"
+SOURCE_DATA_DIR = DATA_DIR / "source"
+TAG_DATA_DIR = DATA_DIR / "tags"
+AUDIO_FEATURE_DATA_DIR = DATA_DIR / "features" / "audio"
+MERT_DATA_DIR = DATA_DIR / "features" / "mert"
+DEFAULT_INPUT = SOURCE_DATA_DIR / "ink_bai_liked_songs.csv"
+DEFAULT_LYRICS_DIR = SOURCE_DATA_DIR / "lyrics"
+DEFAULT_OUTPUT = TAG_DATA_DIR / "song_tags.csv"
+DEFAULT_JSONL = TAG_DATA_DIR / "song_tags.jsonl"
+DEFAULT_MATCHES = AUDIO_FEATURE_DATA_DIR / "audio_song_matches.csv"
+DEFAULT_AUDIO_FEATURES_CSV = AUDIO_FEATURE_DATA_DIR / "audio_features.csv"
+DEFAULT_AUDIO_FEATURES_PARQUET = AUDIO_FEATURE_DATA_DIR / "audio_features.parquet"
+DEFAULT_MERT_MODEL_DIR = BASE_DIR / "models" / "MERT-v1-330M"
+DEFAULT_MERT_EMBEDDINGS_DIR = MERT_DATA_DIR / "embeddings"
+DEFAULT_MERT_INDEX = MERT_DATA_DIR / "mert_index.csv"
+DEFAULT_MERT_CLUSTERS = MERT_DATA_DIR / "mert_clusters.csv"
 DEFAULT_AUDIO_DIR = Path(r"H:\音乐")
 DEFAULT_SOURCE_SEPARATION_CHECKPOINT_DIR = BASE_DIR / "models"
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg"}

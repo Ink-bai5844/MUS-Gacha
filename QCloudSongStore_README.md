@@ -85,8 +85,8 @@ python .\qcloud_song_store.py 2058263032 `
   --levels standard `
   --resolve-host interface.music.163.com=117.135.207.67 `
   --resolve-host music.163.com=112.29.230.13 `
-  --db data\qcloud_songs_test.sqlite3 `
-  --json-dir data\qcloud_song_json_test
+  --db data\source\qcloud_songs_test.sqlite3 `
+  --json-dir data\source\qcloud_song_json_test
 ```
 
 只测试自己的喜欢歌单前三首：
@@ -100,8 +100,8 @@ python .\qcloud_song_store.py `
   --max-songs 3 `
   --resolve-host interface.music.163.com=117.135.207.67 `
   --resolve-host music.163.com=112.29.230.13 `
-  --db data\ink_bai_liked_test.sqlite3 `
-  --json-dir data\ink_bai_liked_test_json
+  --db data\source\ink_bai_liked_test.sqlite3 `
+  --json-dir data\source\ink_bai_liked_test_json
 ```
 
 ## 爬自己的喜欢歌单
@@ -116,8 +116,8 @@ python .\qcloud_song_store.py `
   --resolve-host interface.music.163.com=117.135.207.67 `
   --resolve-host music.163.com=112.29.230.13 `
   --workers 4 `
-  --db data\ink_bai_liked.sqlite3 `
-  --json-dir data\ink_bai_liked_json
+  --db data\source\ink_bai_liked.sqlite3 `
+  --json-dir data\source\ink_bai_liked_json
 ```
 
 建议第一次先加 `--max-songs 20`，确认输出正常后再全量跑。
@@ -134,8 +134,8 @@ python .\qcloud_song_store.py `
   --max-songs 50 `
   --resolve-host interface.music.163.com=117.135.207.67 `
   --resolve-host music.163.com=112.29.230.13 `
-  --db data\playlist_2925790341.sqlite3 `
-  --json-dir data\playlist_2925790341_json
+  --db data\source\playlist_2925790341.sqlite3 `
+  --json-dir data\source\playlist_2925790341_json
 ```
 
 ## 按用户歌单名爬取
@@ -150,8 +150,8 @@ python .\qcloud_song_store.py `
   --max-songs 50 `
   --resolve-host interface.music.163.com=117.135.207.67 `
   --resolve-host music.163.com=112.29.230.13 `
-  --db data\user_playlist.sqlite3 `
-  --json-dir data\user_playlist_json
+  --db data\source\user_playlist.sqlite3 `
+  --json-dir data\source\user_playlist_json
 ```
 
 ## 可抓取接口
@@ -200,7 +200,7 @@ album_detail_dynamic
 SQLite 默认路径：
 
 ```text
-data/qcloud_songs.sqlite3
+data/source/qcloud_songs.sqlite3
 ```
 
 主要表：
@@ -211,13 +211,13 @@ data/qcloud_songs.sqlite3
 JSON 快照默认目录：
 
 ```text
-data/qcloud_song_json
+data/source/qcloud_song_json
 ```
 
 每首歌一个文件：
 
 ```text
-data/qcloud_song_json/2058263032.json
+data/source/qcloud_song_json/2058263032.json
 ```
 
 ## 常见问题

@@ -5,7 +5,7 @@
 当前项目已经支持：
 
 - 从网易云歌曲 JSON 导出主 CSV 和歌词文件。
-- 从 `data/ink_bai_liked_songs.csv`、`data/lyrics`、`H:\音乐` 融合生成标签。
+- 从 `data/source/ink_bai_liked_songs.csv`、`data/source/lyrics`、`H:\音乐` 融合生成标签。
 - 匹配本地音频到 `song_id`，支持一键打开本地文件。
 - 提取音频特征：节奏、能量、明亮度、动态、人声/器乐估计。
 - 批量提取 MERT embedding，生成聚类、近邻歌曲和启发式情绪标签。
@@ -31,20 +31,27 @@
 │   └── build_song_tags.py              # 多源融合打标签
 ├── datacache/                          # Streamlit 预处理缓存
 ├── data/
-│   ├── ink_bai_liked_json/             # 每首歌的原始 JSON
-│   ├── lyrics/                         # song_id.txt 歌词
-│   ├── ink_bai_liked_songs.csv         # 歌曲主表
-│   ├── song_tags.csv                   # 标签主输出
-│   ├── audio_song_matches.csv          # 本地音频匹配结果
-│   ├── audio_features.csv              # 音频特征 CSV
-│   ├── audio_features.parquet          # 音频特征 parquet
-│   ├── mert_index.csv                  # MERT embedding/情绪/近邻索引
-│   ├── mert_clusters.csv               # MERT 聚类/近邻表
-│   └── mert_embeddings/                # 每首歌一个 .npy embedding
-└── MERT-v1-330M/                       # 本地 MERT 模型目录
+│   ├── source/                         # 源数据：JSON、SQLite、歌曲主表、歌词
+│   │   ├── ink_bai_liked_json/         # 每首歌的原始 JSON
+│   │   ├── lyrics/                     # song_id.txt 歌词
+│   │   ├── ink_bai_liked_songs.csv     # 歌曲主表
+│   │   └── ink_bai_liked.sqlite3       # 抓取缓存数据库
+│   ├── tags/                           # 标签输出
+│   │   ├── song_tags.csv               # 标签主输出
+│   │   └── song_tags.jsonl             # JSONL 标签输出
+│   └── features/                       # 特征和模型处理结果
+│       ├── audio/                      # 本地音频匹配与音频特征
+│       │   ├── audio_song_matches.csv
+│       │   ├── audio_features.csv
+│       │   └── audio_features.parquet
+│       └── mert/                       # MERT embedding、情绪、聚类、近邻
+│           ├── embeddings/             # 每首歌一个 .npy embedding
+│           ├── mert_index.csv
+│           └── mert_clusters.csv
+└── models/                             # 本地模型目录，含声源分离与 MERT
 ```
 
-`data/`、`datacache/`、`MERT-v1-330M/` 和 `.cache/` 默认不进 Git。
+`data/`、`datacache/`、`models/` 和 `.cache/` 默认不进 Git。
 
 ## 安装
 
@@ -66,15 +73,15 @@ pip install scikit-learn pyarrow mutagen
 - `pyarrow`：写入 `audio_features.parquet`。
 - `mutagen`：更稳定地读取 MP3/FLAC/M4A 等音频元数据。
 
-如果要跑 MERT，需要本地已有 `MERT-v1-330M` 目录。当前项目默认使用：
+如果要跑 MERT，需要本地已有 `MERT-v1-330M` 模型目录。当前项目默认使用：
 
 ```text
-.\MERT-v1-330M
+.\models\MERT-v1-330M
 ```
 
 ## 快速启动应用
 
-已有 `data/ink_bai_liked_songs.csv` 和 `data/song_tags.csv` 时，直接启动：
+已有 `data/source/ink_bai_liked_songs.csv` 和 `data/tags/song_tags.csv` 时，直接启动：
 
 ```powershell
 streamlit run app.py
@@ -97,7 +104,7 @@ http://localhost:8501
 
 ### 预处理缓存
 
-应用启动时会根据 `data/ink_bai_liked_songs.csv`、`data/song_tags.csv`、`data/lyrics/*.txt` 和预处理缓存版本生成哈希。哈希命中时，Streamlit 会直接读取 `datacache/preprocessed_music.pkl`，跳过 CSV 合并、歌词读取、分词、评论语义标签和评分资源重建。
+应用启动时会根据 `data/source/ink_bai_liked_songs.csv`、`data/tags/song_tags.csv`、`data/features/mert/mert_index.csv`、`data/features/mert/mert_clusters.csv`、`data/source/lyrics/*.txt` 和预处理缓存版本生成哈希。哈希命中时，Streamlit 会直接读取 `datacache/preprocessed_music.pkl`，跳过 CSV 合并、歌词读取、分词、评论语义标签和评分资源重建。
 
 当主 CSV、标签 CSV 或歌词文件发生变化时，`datacache/data.hash` 会失效，下一次启动会自动重建预处理缓存。若缓存结构升级导致异常，可删除 `datacache/` 后重新运行 `streamlit run app.py`。
 
@@ -105,7 +112,7 @@ http://localhost:8501
 
 ### 1. 抓取歌曲 JSON
 
-如果已经有 `data/ink_bai_liked_json`，可以跳过。
+如果已经有 `data/source/ink_bai_liked_json`，可以跳过。
 
 按自己的网易云喜欢歌单名抓取：
 
@@ -113,8 +120,8 @@ http://localhost:8501
 python data_get\qcloud_song_store.py `
   --my-playlist-name "Ink_bai喜欢的音乐" `
   --cookie-file cookie.txt `
-  --json-dir data\ink_bai_liked_json `
-  --db data\ink_bai_liked.sqlite3
+  --json-dir data\source\ink_bai_liked_json `
+  --db data\source\ink_bai_liked.sqlite3
 ```
 
 也可以按歌单 ID 抓取：
@@ -122,8 +129,8 @@ python data_get\qcloud_song_store.py `
 ```powershell
 python data_get\qcloud_song_store.py `
   --playlist-id 你的歌单ID `
-  --json-dir data\ink_bai_liked_json `
-  --db data\ink_bai_liked.sqlite3
+  --json-dir data\source\ink_bai_liked_json `
+  --db data\source\ink_bai_liked.sqlite3
 ```
 
 更详细的抓取说明见 `QCloudSongStore_README.md`。
@@ -132,18 +139,18 @@ python data_get\qcloud_song_store.py `
 
 ```powershell
 python data_processing\export_liked_json_to_csv.py `
-  --input-dir data\ink_bai_liked_json `
-  --output data\ink_bai_liked_songs.csv `
-  --lyrics-dir data\lyrics
+  --input-dir data\source\ink_bai_liked_json `
+  --output data\source\ink_bai_liked_songs.csv `
+  --lyrics-dir data\source\lyrics
 ```
 
 如果希望 CSV 里也包含完整歌词列：
 
 ```powershell
 python data_processing\export_liked_json_to_csv.py `
-  --input-dir data\ink_bai_liked_json `
-  --output data\ink_bai_liked_songs.csv `
-  --lyrics-dir data\lyrics `
+  --input-dir data\source\ink_bai_liked_json `
+  --output data\source\ink_bai_liked_songs.csv `
+  --lyrics-dir data\source\lyrics `
   --include-lyrics
 ```
 
@@ -158,8 +165,8 @@ data_processing\build_song_tags.py
 默认输入：
 
 ```text
-data\ink_bai_liked_songs.csv
-data\lyrics
+data\source\ink_bai_liked_songs.csv
+data\source\lyrics
 H:\音乐
 ```
 
@@ -169,12 +176,12 @@ H:\音乐
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `--input` | `data\ink_bai_liked_songs.csv` | 输入歌曲主表。 |
-| `--lyrics-dir` | `data\lyrics` | 歌词目录，按 `song_id.txt` 读取。 |
+| `--input` | `data\source\ink_bai_liked_songs.csv` | 输入歌曲主表。 |
+| `--lyrics-dir` | `data\source\lyrics` | 歌词目录，按 `song_id.txt` 读取。 |
 | `--audio-dir` | `H:\音乐` | 本地音乐目录，用来匹配音频文件。 |
-| `--output` | `data\song_tags.csv` | 标签主输出，Streamlit 会读取它。 |
-| `--jsonl-output` | `data\song_tags.jsonl` | JSONL 版标签输出。 |
-| `--matches-output` | `data\audio_song_matches.csv` | 本地音频匹配表输出/复用路径。 |
+| `--output` | `data\tags\song_tags.csv` | 标签主输出，Streamlit 会读取它。 |
+| `--jsonl-output` | `data\tags\song_tags.jsonl` | JSONL 版标签输出。 |
+| `--matches-output` | `data\features\audio\audio_song_matches.csv` | 本地音频匹配表输出/复用路径。 |
 
 本地音频匹配：
 
@@ -189,8 +196,8 @@ H:\音乐
 |---|---|---|
 | `--analyze-audio` | 关闭 | 用 `torchaudio` 提取节奏、能量、明亮度等普通音频特征。 |
 | `--audio-feature-seconds` | `45` | 每首歌读取多少秒做普通音频分析。 |
-| `--audio-features-csv` | `data\audio_features.csv` | 音频特征 CSV 输出路径。 |
-| `--audio-features-parquet` | `data\audio_features.parquet` | 音频特征 parquet 输出路径。 |
+| `--audio-features-csv` | `data\features\audio\audio_features.csv` | 音频特征 CSV 输出路径。 |
+| `--audio-features-parquet` | `data\features\audio\audio_features.parquet` | 音频特征 parquet 输出路径。 |
 
 声源分离：
 
@@ -207,10 +214,10 @@ MERT：
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `--extract-mert` | 关闭 | 提取 MERT embedding，并生成情绪、聚类和近邻信息。 |
-| `--mert-model-dir` | `MERT-v1-330M` | 本地 MERT 模型目录。 |
-| `--mert-embeddings-dir` | `data\mert_embeddings` | 每首歌 `.npy` embedding 输出目录。 |
-| `--mert-index` | `data\mert_index.csv` | MERT 索引输出。 |
-| `--mert-clusters-output` | `data\mert_clusters.csv` | MERT 聚类/近邻输出。 |
+| `--mert-model-dir` | `models\MERT-v1-330M` | 本地 MERT 模型目录。 |
+| `--mert-embeddings-dir` | `data\features\mert\embeddings` | 每首歌 `.npy` embedding 输出目录。 |
+| `--mert-index` | `data\features\mert\mert_index.csv` | MERT 索引输出。 |
+| `--mert-clusters-output` | `data\features\mert\mert_clusters.csv` | MERT 聚类/近邻输出。 |
 | `--mert-limit` | `0` | 限制处理歌曲数，`0` 表示全部。小批量测试建议设为 `4` 或 `10`。 |
 | `--overwrite-mert` | 关闭 | 已有 embedding 时强制重算。 |
 | `--mert-max-seconds` | `20.0` | 每首歌最多读取多少秒给 MERT。 |
@@ -240,9 +247,9 @@ python data_processing\build_song_tags.py --audio-dir "H:\音乐"
 输出：
 
 ```text
-data\song_tags.csv
-data\song_tags.jsonl
-data\audio_song_matches.csv
+data\tags\song_tags.csv
+data\tags\song_tags.jsonl
+data\features\audio\audio_song_matches.csv
 ```
 
 ### 生成音频特征
@@ -260,8 +267,8 @@ python data_processing\build_song_tags.py `
 额外输出：
 
 ```text
-data\audio_features.csv
-data\audio_features.parquet
+data\features\audio\audio_features.csv
+data\features\audio\audio_features.parquet
 ```
 
 会回写到 `song_tags.csv` 的字段包括：
@@ -349,9 +356,9 @@ python data_processing\build_song_tags.py `
 额外输出：
 
 ```text
-data\mert_embeddings\*.npy
-data\mert_index.csv
-data\mert_clusters.csv
+data\features\mert\embeddings\*.npy
+data\features\mert\mert_index.csv
+data\features\mert\mert_clusters.csv
 ```
 
 会回写到 `song_tags.csv` 的字段包括：
@@ -449,7 +456,7 @@ album_name
 
 ### 歌词关键词
 
-歌词关键词来自 `data/lyrics/{song_id}.txt` 或 CSV 中的歌词摘要。处理流程：
+歌词关键词来自 `data/source/lyrics/{song_id}.txt` 或 CSV 中的歌词摘要。处理流程：
 
 1. 清理 LRC 时间轴、作词/作曲/编曲等元信息。
 2. 按语种选择分词库。
@@ -528,7 +535,7 @@ first_comment
 匹配结果在：
 
 ```text
-data\audio_song_matches.csv
+data\features\audio\audio_song_matches.csv
 ```
 
 重要字段：
@@ -552,7 +559,7 @@ data\audio_song_matches.csv
 
 ```powershell
 python .\mert_emotion_demo.py `
-  --model-dir .\MERT-v1-330M `
+  --model-dir .\models\MERT-v1-330M `
   --audio "H:\音乐\demo.flac" `
   --max-seconds 30 `
   --fp16
@@ -562,7 +569,7 @@ python .\mert_emotion_demo.py `
 
 ```powershell
 python .\mert_emotion_demo.py `
-  --model-dir .\MERT-v1-330M `
+  --model-dir .\models\MERT-v1-330M `
   --audio "H:\音乐\demo.flac" `
   --max-seconds 30 `
   --output-json emotion_result.json
@@ -572,7 +579,7 @@ python .\mert_emotion_demo.py `
 
 ```powershell
 python .\mert_emotion_demo.py `
-  --model-dir .\MERT-v1-330M `
+  --model-dir .\models\MERT-v1-330M `
   --audio "H:\音乐\demo.flac" `
   --mode classifier `
   --head-checkpoint .\emotion_head.pt

@@ -21,9 +21,9 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_INPUT_DIR = Path("data/ink_bai_liked_json")
-DEFAULT_OUTPUT = Path("data/ink_bai_liked_songs.csv")
-DEFAULT_LYRICS_DIR = Path("lyrics")
+DEFAULT_INPUT_DIR = Path("data/source/ink_bai_liked_json")
+DEFAULT_OUTPUT = Path("data/source/ink_bai_liked_songs.csv")
+DEFAULT_LYRICS_DIR = Path("data/source/lyrics")
 COPYRIGHT_UNAVAILABLE_MARKER = "\u6682\u65e0\u7248\u6743"
 URL_LEVELS = ("standard", "exhigh", "lossless", "hires")
 AUDIO_QUALITIES = ("l", "m", "h", "sq", "hr")

@@ -2,11 +2,16 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_FILE = BASE_DIR / "data" / "ink_bai_liked_songs.csv"
-LYRICS_DIR = BASE_DIR / "data" / "lyrics"
-TAGS_FILE = BASE_DIR / "data" / "song_tags.csv"
-MERT_INDEX_FILE = BASE_DIR / "data" / "mert_index.csv"
-MERT_CLUSTERS_FILE = BASE_DIR / "data" / "mert_clusters.csv"
+DATA_DIR = BASE_DIR / "data"
+SOURCE_DATA_DIR = DATA_DIR / "source"
+TAG_DATA_DIR = DATA_DIR / "tags"
+AUDIO_FEATURE_DATA_DIR = DATA_DIR / "features" / "audio"
+MERT_DATA_DIR = DATA_DIR / "features" / "mert"
+DATA_FILE = SOURCE_DATA_DIR / "ink_bai_liked_songs.csv"
+LYRICS_DIR = SOURCE_DATA_DIR / "lyrics"
+TAGS_FILE = TAG_DATA_DIR / "song_tags.csv"
+MERT_INDEX_FILE = MERT_DATA_DIR / "mert_index.csv"
+MERT_CLUSTERS_FILE = MERT_DATA_DIR / "mert_clusters.csv"
 CACHE_DIR = BASE_DIR / "datacache"
 PREPROCESSED_DATA_FILE = CACHE_DIR / "preprocessed_music.pkl"
 PREPROCESSED_HASH_FILE = CACHE_DIR / "data.hash"
