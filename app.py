@@ -190,7 +190,7 @@ with st.sidebar.expander("全局维度权重", expanded=True):
         "本地音频": st.slider("本地音频倍率（已匹配到本地音乐文件的加成）", 0.0, 5.0, 0.8, 0.1),
         "MERT": st.slider("MERT 可用倍率（已提取 MERT embedding/情绪信息的加成）", 0.0, 5.0, 0.4, 0.1),
     }
-    global_history_weight = st.slider("历史偏好总分倍率", 0.0, 5.0, 1.0, 0.1)
+    global_history_weight = st.slider("历史偏好总分倍率（历史偏好在整体评分中的权重）", 0.0, 5.0, 1.0, 0.1)
 
 all_weight_tags = sorted(scoring_resources["all_tags"].keys())
 valid_default_tags = [tag for tag in INITIAL_TAG_WEIGHTS if tag in all_weight_tags]
