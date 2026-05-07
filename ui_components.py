@@ -5,8 +5,35 @@ import pandas as pd
 import streamlit as st
 
 from utils_core import open_local_file
-from utils_history import record_recommendation_history
+from utils_history import build_tracked_link, record_recommendation_history
 from utils_text import safe_text
+
+
+def format_audio_tempo(song) -> str:
+    tempo = safe_text(song.get("audio_tempo_bpm"))
+    if not tempo:
+        return ""
+
+    source = safe_text(song.get("audio_tempo_source"))
+    raw_tempo = safe_text(song.get("audio_tempo_raw_bpm"))
+    try:
+        tempo_number = float(tempo)
+        tempo = str(int(tempo_number)) if tempo_number.is_integer() else f"{tempo_number:.2f}".rstrip("0").rstrip(".")
+    except ValueError:
+        pass
+    try:
+        raw_number = float(raw_tempo)
+        raw_tempo = str(int(raw_number)) if raw_number.is_integer() else f"{raw_number:.2f}".rstrip("0").rstrip(".")
+    except ValueError:
+        pass
+    suffix = ""
+    if source == "source_csv":
+        suffix = "（源表）"
+    elif source == "audio_estimate" and raw_tempo and raw_tempo != tempo:
+        suffix = f"（估计，原始 {raw_tempo}）"
+    elif source == "audio_estimate":
+        suffix = "（估计）"
+    return f"{tempo} BPM{suffix}"
 
 
 def render_page_style():
@@ -55,14 +82,17 @@ def render_page_style():
     )
 
 
-def render_detail(song):
+def render_detail(song, link_tracking_server=None):
     left, right = st.columns([1.1, 2.4], gap="large")
 
     with left:
         cover = safe_text(song.get("album_pic_url", ""))
         if cover:
             st.image(cover, width="stretch")
-        st.link_button("打开网易云页面", safe_text(song.get("netease_url", "")), width="stretch")
+        netease_url = safe_text(song.get("netease_url", ""))
+        if netease_url:
+            detail_link = build_tracked_link(song) if link_tracking_server is not None else netease_url
+            st.link_button("打开网易云页面", detail_link, width="stretch")
 
         local_audio_path = safe_text(song.get("local_audio_path", ""))
         if local_audio_path:
@@ -121,7 +151,7 @@ def render_detail(song):
                     safe_text(song.get("local_audio_album")),
                 ] if item])),
                 ("音频特征", " · ".join([item for item in [
-                    f"{safe_text(song.get('audio_tempo_bpm'))} BPM" if safe_text(song.get("audio_tempo_bpm")) else "",
+                    format_audio_tempo(song),
                     safe_text(song.get("audio_feature_tags")),
                 ] if item])),
                 ("人声/器乐", " · ".join([item for item in [

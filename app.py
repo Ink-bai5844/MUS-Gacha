@@ -16,6 +16,7 @@ from utils_charts import (
     render_preference_chart_grid,
 )
 from utils_history import (
+    build_tracked_link,
     build_history_preference_maps,
     clear_history_entries,
     load_history_settings,
@@ -23,6 +24,7 @@ from utils_history import (
     record_recommendation_history,
     save_selection_writes_history,
     save_history_entries,
+    start_link_tracking_server,
 )
 from utils_text import safe_text
 
@@ -126,6 +128,7 @@ if SELECTION_WRITES_HISTORY_STATE_KEY not in st.session_state:
         "selection_writes_history"
     ]
 
+link_tracking_server = start_link_tracking_server()
 
 with st.spinner("正在同步预处理缓存与评分资源..."):
     df_base, scoring_resources = load_music_data()
@@ -410,6 +413,8 @@ with tab_overview:
                     ]
                 ]
             )
+            if link_tracking_server is not None and "netease_url" in overview_table.columns:
+                overview_table["netease_url"] = top_df.apply(build_tracked_link, axis=1)
             edited_overview = st.data_editor(
                 overview_table,
                 column_config={
@@ -531,6 +536,8 @@ with tab_library:
                 ]
             ]
         )
+        if link_tracking_server is not None and "netease_url" in library_table.columns:
+            library_table["netease_url"] = display_df.apply(build_tracked_link, axis=1)
         edited_library = st.data_editor(
             library_table,
             column_config={
@@ -577,17 +584,17 @@ with tab_detail:
         selected_song, matched_selected = selected_or_first(filtered_df, ["dynamic_score", "comment_total"])
         if not matched_selected and current_selected_song_id():
             st.caption("当前选中的歌曲不在详情结果中，已显示当前筛选范围内推荐最高的歌曲。")
-        render_detail(selected_song)
+        render_detail(selected_song, link_tracking_server=link_tracking_server)
 
 with tab_history:
     st.subheader("历史记录")
     st.checkbox(
         "选中歌曲算入历史记录",
         key=SELECTION_WRITES_HISTORY_STATE_KEY,
-        help="关闭后，勾选歌曲只会切换当前歌曲，不会新增历史偏好记录。",
+        help="关闭后，勾选歌曲只会切换当前歌曲；打开网易云页面和本地音频仍会记录。",
         on_change=persist_selection_history_setting,
     )
-    st.caption(f"缓存最近 {HISTORY_RECOMMENDATION_CACHE_SIZE} 次选中记录，当前已保存 {len(history_entries)} 条。")
+    st.caption(f"缓存最近 {HISTORY_RECOMMENDATION_CACHE_SIZE} 次选中/打开记录，当前已保存 {len(history_entries)} 条。")
 
     col_refresh_history, col_clear_history = st.columns(2)
     with col_refresh_history:

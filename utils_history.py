@@ -1,10 +1,24 @@
 import json
 import math
+import hashlib
+import threading
 from collections import Counter
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, quote, urlparse
 
-from config import HISTORY_CACHE_FILE, HISTORY_RECOMMENDATION_CACHE_SIZE, HISTORY_SETTINGS_FILE
+from config import (
+    HISTORY_CACHE_FILE,
+    HISTORY_LINK_TRACKING_HOST,
+    HISTORY_LINK_TRACKING_PORT,
+    HISTORY_RECOMMENDATION_CACHE_SIZE,
+    HISTORY_SETTINGS_FILE,
+)
 from utils_text import safe_text
+
+_TRACKED_LINK_ITEMS = {}
+_TRACKED_LINK_LOCK = threading.Lock()
+_TRACKING_SERVER = None
 
 
 DEFAULT_HISTORY_SETTINGS = {
@@ -149,6 +163,107 @@ def record_recommendation_history(row_data, action="select"):
     entries = load_history_entries()
     entries.append(entry)
     return save_history_entries(entries)
+
+
+def _is_valid_web_link(link):
+    normalized_link = safe_text(link).lower()
+    return normalized_link.startswith(("http://", "https://"))
+
+
+def _build_tracking_token(row_data):
+    song_id = safe_text(row_data.get("song_id"))
+    if song_id:
+        return song_id
+
+    raw_token = json.dumps(
+        {
+            "name": safe_text(row_data.get("name")),
+            "artist_names": safe_text(row_data.get("artist_names")),
+            "link": safe_text(row_data.get("netease_url")),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.md5(raw_token.encode("utf-8")).hexdigest()
+
+
+def register_tracked_link_item(row_data):
+    if hasattr(row_data, "to_dict"):
+        row_data = row_data.to_dict()
+
+    row_data = row_data or {}
+    token = _build_tracking_token(row_data)
+    with _TRACKED_LINK_LOCK:
+        _TRACKED_LINK_ITEMS[token] = dict(row_data)
+    return token
+
+
+def build_tracked_link(row_data):
+    if hasattr(row_data, "to_dict"):
+        row_data = row_data.to_dict()
+
+    row_data = row_data or {}
+    target_link = safe_text(row_data.get("netease_url"))
+    if not _is_valid_web_link(target_link):
+        return target_link
+
+    token = register_tracked_link_item(row_data)
+    return (
+        f"http://{HISTORY_LINK_TRACKING_HOST}:{HISTORY_LINK_TRACKING_PORT}/open"
+        f"?token={quote(token)}&target={quote(target_link, safe='')}"
+    )
+
+
+class _HistoryTrackingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed_url = urlparse(self.path)
+        if parsed_url.path != "/open":
+            self.send_error(404)
+            return
+
+        query = parse_qs(parsed_url.query)
+        token = query.get("token", [""])[0]
+        target_link = query.get("target", [""])[0]
+
+        with _TRACKED_LINK_LOCK:
+            item_payload = _TRACKED_LINK_ITEMS.get(token)
+
+        if item_payload:
+            record_recommendation_history(item_payload, "netease_link")
+
+        if not _is_valid_web_link(target_link):
+            target_link = safe_text((item_payload or {}).get("netease_url"))
+
+        if not _is_valid_web_link(target_link):
+            self.send_error(400, "Invalid target link")
+            return
+
+        self.send_response(302)
+        self.send_header("Location", target_link)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        return
+
+
+def start_link_tracking_server():
+    global _TRACKING_SERVER
+
+    if _TRACKING_SERVER is not None:
+        return _TRACKING_SERVER
+
+    try:
+        server = ThreadingHTTPServer(
+            (HISTORY_LINK_TRACKING_HOST, HISTORY_LINK_TRACKING_PORT),
+            _HistoryTrackingHandler,
+        )
+    except OSError:
+        return None
+
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    _TRACKING_SERVER = server
+    return server
 
 
 def _count_history_features(history_entries, field_name):

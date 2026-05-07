@@ -254,6 +254,14 @@ def parse_bpm(text: str) -> int | None:
     return None
 
 
+def row_bpm(row: pd.Series) -> int | None:
+    for col in ["bpm", "wiki_bpm", "audio_tempo_bpm"]:
+        value = pd.to_numeric(row.get(col), errors="coerce")
+        if pd.notna(value) and 40 <= float(value) <= 260:
+            return int(round(float(value)))
+    return parse_bpm(safe_text(row.get("wiki_summary_excerpt")))
+
+
 def read_lyric(lyrics_dir: Path, song_id: str) -> str:
     path = lyrics_dir / f"{song_id}.txt"
     if not path.exists():
@@ -374,7 +382,7 @@ def build_tags_for_row(row: pd.Series, lyric: str) -> dict[str, Any]:
         add_tag(categories, sources, "style", "纯音乐", 0.96, "lyrics")
         add_tag(categories, sources, "scene", "放松", 0.55, "lyrics")
 
-    bpm = parse_bpm(wiki)
+    bpm = row_bpm(row)
     if bpm:
         if bpm >= 125:
             add_tag(categories, sources, "audio", "快节奏", 0.82, "csv.wiki_bpm")
@@ -545,7 +553,35 @@ def get_audio_duration(path: Path) -> tuple[float | None, str]:
         return None, str(exc)
 
 
-def estimate_tempo_from_onsets(onset_envelope: Any, sample_rate: int, hop_length: int) -> float | None:
+def fold_tempo_to_listening_range(tempo: float) -> float:
+    candidates = []
+    for factor in (0.25, 0.5, 1.0, 2.0, 4.0):
+        candidate = tempo * factor
+        if 55 <= candidate <= 190:
+            candidates.append(candidate)
+    if not candidates:
+        while tempo < 55:
+            tempo *= 2
+        while tempo > 190:
+            tempo /= 2
+        return tempo
+
+    preferred = [item for item in candidates if 72 <= item <= 145]
+    pool = preferred or candidates
+    return min(pool, key=lambda item: (abs(item - 100), item))
+
+
+def tempo_label(tempo: float | int | None) -> str:
+    if tempo is None:
+        return ""
+    if tempo >= 132:
+        return "快节奏"
+    if tempo <= 72:
+        return "慢节奏"
+    return "中速"
+
+
+def estimate_tempo_from_onsets(onset_envelope: Any, sample_rate: int, hop_length: int) -> tuple[float, float] | None:
     try:
         import torch
     except Exception:
@@ -571,13 +607,8 @@ def estimate_tempo_from_onsets(onset_envelope: Any, sample_rate: int, hop_length
         scores.append(torch.sum(envelope[:-lag] * envelope[lag:]))
     corr = torch.stack(scores)
     best_lag = min_lag + int(torch.argmax(corr).item())
-    tempo = 60 * sample_rate / (best_lag * hop_length)
-
-    while tempo < 70:
-        tempo *= 2
-    while tempo > 180:
-        tempo /= 2
-    return float(tempo)
+    raw_tempo = float(60 * sample_rate / (best_lag * hop_length))
+    return raw_tempo, fold_tempo_to_listening_range(raw_tempo)
 
 
 def choose_torch_device(device_name: str) -> str:
@@ -954,7 +985,13 @@ def match_audio_files(df: pd.DataFrame, audio_dir: Path, threshold: float, show_
     return matches.sort_values(["song_id", "match_score"], ascending=[True, False]).drop_duplicates("song_id")
 
 
-def analyze_audio_file(path: Path, seconds: float, source_separator: dict[str, Any] | None = None, source_seconds: float = 30.0) -> dict[str, Any]:
+def analyze_audio_file(
+    path: Path,
+    seconds: float,
+    source_separator: dict[str, Any] | None = None,
+    source_seconds: float = 30.0,
+    preferred_bpm: int | None = None,
+) -> dict[str, Any]:
     try:
         import torch
         import torchaudio
@@ -985,33 +1022,33 @@ def analyze_audio_file(path: Path, seconds: float, source_separator: dict[str, A
         crest = float(peak / (rms + 1e-9))
         flux = torch.relu(spectrum[:, 1:] - spectrum[:, :-1]).sum(dim=0)
         onset_strength = float(flux.mean() / (spectrum.mean() + 1e-9)) if flux.numel() else 0.0
-        tempo = estimate_tempo_from_onsets(flux, sample_rate, hop_length)
+        tempo_pair = estimate_tempo_from_onsets(flux, sample_rate, hop_length)
+        raw_tempo = tempo_pair[0] if tempo_pair is not None else None
+        estimated_tempo = tempo_pair[1] if tempo_pair is not None else None
+        tempo = float(preferred_bpm) if preferred_bpm else estimated_tempo
+        tempo_source = "source_csv" if preferred_bpm else ("audio_estimate" if estimated_tempo is not None else "")
 
         labels = []
-        if tempo is not None:
-            if tempo >= 125:
-                labels.append("快节奏")
-            elif tempo <= 80:
-                labels.append("慢节奏")
-            else:
-                labels.append("中速")
-        if rms >= 0.11:
+        label = tempo_label(tempo)
+        if label:
+            labels.append(label)
+        if rms >= 0.13:
             labels.append("高能量")
-        elif rms <= 0.035:
+        elif rms <= 0.04:
             labels.append("低能量")
         else:
             labels.append("中等能量")
-        if centroid >= 3100:
+        if centroid >= 3600:
             labels.append("明亮")
-        elif centroid <= 1500:
+        elif centroid <= 1300 and rms < 0.13:
             labels.append("柔和")
         if zcr >= 0.12:
             labels.append("节奏颗粒感")
         if crest >= 8:
             labels.append("动态大")
-        if onset_strength >= 220:
+        if onset_strength >= 260:
             labels.append("律动明显")
-        elif onset_strength and onset_strength <= 170:
+        elif onset_strength and onset_strength <= 130 and rms < 0.13:
             labels.append("律动弱")
 
         result = {
@@ -1023,6 +1060,8 @@ def analyze_audio_file(path: Path, seconds: float, source_separator: dict[str, A
             "audio_vocal_band_ratio": round(vocal_band_ratio, 4),
             "audio_crest": round(crest, 3),
             "audio_tempo_bpm": round(tempo, 2) if tempo is not None else "",
+            "audio_tempo_raw_bpm": round(raw_tempo, 2) if raw_tempo is not None else "",
+            "audio_tempo_source": tempo_source,
             "audio_onset_strength": round(onset_strength, 4),
             "audio_feature_tags": " | ".join(labels),
             "audio_error": "",
@@ -1472,6 +1511,7 @@ def build_song_tags(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFram
                 args.audio_feature_seconds,
                 source_separator=source_separator,
                 source_seconds=args.source_separation_seconds,
+                preferred_bpm=row_bpm(row),
             )
             if args.source_separation and source_separator is None:
                 features["source_separation_model"] = args.source_separation_model

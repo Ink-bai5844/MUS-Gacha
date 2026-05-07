@@ -14,11 +14,13 @@ LYRICS_DIR = SOURCE_DATA_DIR / "lyrics"
 CACHE_DIR = BASE_DIR / "datacache"
 PREPROCESSED_DATA_FILE = CACHE_DIR / "preprocessed_music.pkl"
 PREPROCESSED_HASH_FILE = CACHE_DIR / "data.hash"
-PREPROCESS_CACHE_VERSION = "mus-gacha-preprocess-v6"
+PREPROCESS_CACHE_VERSION = "mus-gacha-preprocess-v7"
 MAX_DISPLAY = 60
 HISTORY_CACHE_FILE = CACHE_DIR / "recommendation_history.json"
 HISTORY_SETTINGS_FILE = CACHE_DIR / "history_settings.json"
 HISTORY_RECOMMENDATION_CACHE_SIZE = 80
+HISTORY_LINK_TRACKING_HOST = "127.0.0.1"
+HISTORY_LINK_TRACKING_PORT = 8766
 
 INITIAL_TAG_WEIGHTS = {
     "人声强": 1.4,
@@ -128,6 +130,8 @@ GENERATED_TAG_COLUMNS = [
     "audio_duration_seconds",
     "audio_sample_rate",
     "audio_tempo_bpm",
+    "audio_tempo_raw_bpm",
+    "audio_tempo_source",
     "audio_onset_strength",
     "audio_rms",
     "audio_zcr",
