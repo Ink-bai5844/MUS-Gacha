@@ -1,24 +1,26 @@
 import hashlib
+import json
 import math
 import pickle
 import re
 from collections import Counter
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from config import (
+    AUDIO_FEATURE_DATA_DIR,
     BASE_DIR,
     CACHE_DIR,
     GENERATED_TAG_COLUMNS,
     LYRICS_DIR,
-    MERT_CLUSTERS_FILE,
-    MERT_INDEX_FILE,
+    MERT_DATA_DIR,
     PREPROCESS_CACHE_VERSION,
     PREPROCESSED_DATA_FILE,
     PREPROCESSED_HASH_FILE,
-    TAGS_FILE,
     SOURCE_DATA_DIR,
+    TAG_DATA_DIR,
     TEXT_COLUMNS,
 )
 from utils_core import build_search_text, extract_language_tags, preferred_quality, read_lyric
@@ -42,43 +44,154 @@ def minmax(series, index=None):
     return numeric / max_value
 
 
-def load_generated_tags():
-    if TAGS_FILE.exists():
-        tags_df = pd.read_csv(TAGS_FILE, dtype={"song_id": "string"})
-        tags_df.columns = [col.strip() for col in tags_df.columns]
-        if "language_tags" in tags_df.columns:
-            tags_df = tags_df.rename(columns={"language_tags": "generated_language_tags"})
+def csv_paths(directory: Path, pattern: str = "*.csv") -> list[Path]:
+    if not directory.exists():
+        return []
+    return sorted(path for path in directory.glob(pattern) if path.is_file())
 
-        keep_columns = ["song_id"] + [col for col in GENERATED_TAG_COLUMNS if col in tags_df.columns]
-        tags_df = tags_df[keep_columns].drop_duplicates("song_id")
-    else:
-        tags_df = pd.DataFrame()
 
-    mert_df = load_mert_tags()
-    if mert_df.empty:
-        return tags_df
-    if tags_df.empty:
-        return mert_df
+def tag_csv_paths() -> list[Path]:
+    return csv_paths(TAG_DATA_DIR, "*.csv")
 
-    merged_df = tags_df.merge(mert_df, on="song_id", how="outer", suffixes=("", "_mert_source"))
-    for col in [item for item in GENERATED_TAG_COLUMNS if item in mert_df.columns]:
-        source_col = f"{col}_mert_source"
-        if source_col not in merged_df.columns:
+
+def tag_jsonl_paths() -> list[Path]:
+    if not TAG_DATA_DIR.exists():
+        return []
+    return sorted(path for path in TAG_DATA_DIR.glob("*.jsonl") if path.is_file())
+
+
+def audio_match_csv_paths() -> list[Path]:
+    return csv_paths(AUDIO_FEATURE_DATA_DIR, "*audio_song_matches*.csv")
+
+
+def audio_feature_csv_paths() -> list[Path]:
+    return csv_paths(AUDIO_FEATURE_DATA_DIR, "*audio_features*.csv")
+
+
+def mert_csv_paths() -> list[Path]:
+    paths = [
+        *csv_paths(MERT_DATA_DIR, "*mert_index*.csv"),
+        *csv_paths(MERT_DATA_DIR, "*mert_clusters*.csv"),
+    ]
+    return sorted(dict.fromkeys(paths))
+
+
+def read_jsonl_frame(path: Path) -> pd.DataFrame:
+    rows = []
+    with path.open("r", encoding="utf-8-sig") as file:
+        for line in file:
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if isinstance(record, dict):
+                rows.append(record)
+    return pd.DataFrame(rows)
+
+
+def normalize_song_id_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "song_id" not in frame.columns:
+        return pd.DataFrame()
+    frame = frame.copy()
+    frame.columns = [col.strip() for col in frame.columns]
+    if "language_tags" in frame.columns:
+        frame = frame.rename(columns={"language_tags": "generated_language_tags"})
+    frame["song_id"] = frame["song_id"].astype("string").str.strip()
+    return frame[frame["song_id"].fillna("").ne("")]
+
+
+def merge_song_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    normalized_frames = []
+    for source_order, frame in enumerate(frames):
+        frame = normalize_song_id_frame(frame)
+        if frame.empty:
             continue
-        if col in merged_df.columns:
-            has_value = merged_df[col].fillna("").astype(str).str.len().gt(0)
-            merged_df[col] = merged_df[col].where(has_value, merged_df[source_col])
-        else:
-            merged_df[col] = merged_df[source_col]
-        merged_df = merged_df.drop(columns=[source_col])
+        keep_columns = ["song_id"] + [col for col in GENERATED_TAG_COLUMNS if col in frame.columns]
+        if len(keep_columns) <= 1:
+            continue
+        frame = frame[keep_columns].copy()
+        frame["_result_source_order"] = source_order
+        frame["_result_row_order"] = range(len(frame))
+        normalized_frames.append(frame)
 
-    keep_columns = ["song_id"] + [col for col in GENERATED_TAG_COLUMNS if col in merged_df.columns]
-    return merged_df[keep_columns].drop_duplicates("song_id")
+    if not normalized_frames:
+        return pd.DataFrame()
+
+    merged_source = (
+        pd.concat(normalized_frames, ignore_index=True, sort=False)
+        .sort_values(["_result_source_order", "_result_row_order"], kind="stable")
+        .reset_index(drop=True)
+    )
+    merged_source["_result_position"] = range(len(merged_source))
+
+    song_order = (
+        merged_source[["song_id", "_result_position"]]
+        .drop_duplicates("song_id", keep="last")
+        .sort_values("_result_position", kind="stable")
+    )
+    result = song_order[["song_id"]].reset_index(drop=True)
+
+    for col in [item for item in GENERATED_TAG_COLUMNS if item in merged_source.columns]:
+        values = merged_source[["song_id", col]].copy()
+        values[col] = values[col].fillna("").astype(str).str.strip()
+        values = values[values[col].ne("")]
+        if values.empty:
+            continue
+        latest_values = values.drop_duplicates("song_id", keep="last")
+        result = result.merge(latest_values, on="song_id", how="left")
+        result[col] = result[col].fillna("")
+
+    return result
+
+
+def merge_generated_tag_sets(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    return merge_song_frames(frames)
+
+
+def load_tag_result_frames() -> list[pd.DataFrame]:
+    frames = []
+    for path in tag_csv_paths():
+        frames.append(pd.read_csv(path, dtype={"song_id": "string"}))
+    for path in tag_jsonl_paths():
+        frames.append(read_jsonl_frame(path))
+    return frames
+
+
+def load_audio_match_frames() -> list[pd.DataFrame]:
+    frames = []
+    for path in audio_match_csv_paths():
+        frame = pd.read_csv(path, dtype={"song_id": "string"})
+        frame.columns = [col.strip() for col in frame.columns]
+        frame = frame.rename(
+            columns={
+                "file_path": "local_audio_path",
+                "match_score": "audio_match_score",
+                "audio_title": "local_audio_title",
+                "audio_artist": "local_audio_artist",
+                "audio_album": "local_audio_album",
+            }
+        )
+        frames.append(frame)
+    return frames
+
+
+def load_audio_feature_frames() -> list[pd.DataFrame]:
+    return [pd.read_csv(path, dtype={"song_id": "string"}) for path in audio_feature_csv_paths()]
+
+
+def load_generated_tags():
+    frames = [
+        merge_generated_tag_sets(load_tag_result_frames()),
+        merge_generated_tag_sets(load_audio_match_frames()),
+        merge_generated_tag_sets(load_audio_feature_frames()),
+        load_mert_tags(),
+    ]
+    return merge_generated_tag_sets([frame for frame in frames if not frame.empty])
 
 
 def load_mert_tags():
     mert_frames = []
-    for path in [MERT_INDEX_FILE, MERT_CLUSTERS_FILE]:
+    for path in mert_csv_paths():
         if not path.exists():
             continue
         mert_df = pd.read_csv(path, dtype={"song_id": "string"})
@@ -257,8 +370,18 @@ def get_preprocess_data_hash():
     for path in source_csv_paths:
         update_path_signature(hasher, path)
 
-    for path in [TAGS_FILE, MERT_INDEX_FILE, MERT_CLUSTERS_FILE]:
-        update_path_signature(hasher, path)
+    result_path_groups = [
+        ("tag-csv", tag_csv_paths()),
+        ("tag-jsonl", tag_jsonl_paths()),
+        ("audio-matches", audio_match_csv_paths()),
+        ("audio-features", audio_feature_csv_paths()),
+        ("mert", mert_csv_paths()),
+    ]
+    for group_name, paths in result_path_groups:
+        hasher.update(group_name.encode("utf-8"))
+        hasher.update(str(len(paths)).encode("utf-8"))
+        for path in paths:
+            update_path_signature(hasher, path)
 
     if LYRICS_DIR.exists():
         lyric_paths = sorted(LYRICS_DIR.glob("*.txt"), key=lambda item: item.name)

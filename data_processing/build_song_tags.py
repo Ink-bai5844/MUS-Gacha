@@ -31,17 +31,9 @@ SOURCE_DATA_DIR = DATA_DIR / "source"
 TAG_DATA_DIR = DATA_DIR / "tags"
 AUDIO_FEATURE_DATA_DIR = DATA_DIR / "features" / "audio"
 MERT_DATA_DIR = DATA_DIR / "features" / "mert"
-DEFAULT_INPUT = SOURCE_DATA_DIR / "ink_bai_liked_songs.csv"
 DEFAULT_LYRICS_DIR = SOURCE_DATA_DIR / "lyrics"
-DEFAULT_OUTPUT = TAG_DATA_DIR / "song_tags.csv"
-DEFAULT_JSONL = TAG_DATA_DIR / "song_tags.jsonl"
-DEFAULT_MATCHES = AUDIO_FEATURE_DATA_DIR / "audio_song_matches.csv"
-DEFAULT_AUDIO_FEATURES_CSV = AUDIO_FEATURE_DATA_DIR / "audio_features.csv"
-DEFAULT_AUDIO_FEATURES_PARQUET = AUDIO_FEATURE_DATA_DIR / "audio_features.parquet"
 DEFAULT_MERT_MODEL_DIR = BASE_DIR / "models" / "MERT-v1-330M"
 DEFAULT_MERT_EMBEDDINGS_DIR = MERT_DATA_DIR / "embeddings"
-DEFAULT_MERT_INDEX = MERT_DATA_DIR / "mert_index.csv"
-DEFAULT_MERT_CLUSTERS = MERT_DATA_DIR / "mert_clusters.csv"
 DEFAULT_AUDIO_DIR = Path(r"H:\音乐")
 DEFAULT_SOURCE_SEPARATION_CHECKPOINT_DIR = BASE_DIR / "models"
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg"}
@@ -143,6 +135,48 @@ MERT_EMOTION_TAGS = {
     "energetic": "热血",
     "melancholic": "忧郁",
 }
+
+
+def strip_dataset_suffix(name: str) -> str:
+    clean = name.strip().replace(" ", "_")
+    for suffix in ("_song_tags", "_song_features", "_song_matches", "_songs", "_json"):
+        if clean.endswith(suffix):
+            return clean[: -len(suffix)] or "songs"
+    return clean or "songs"
+
+
+def dataset_name_from_path(path: Path) -> str:
+    return strip_dataset_suffix(path.stem)
+
+
+def first_source_csv_path() -> Path:
+    if SOURCE_DATA_DIR.exists():
+        paths = sorted(path for path in SOURCE_DATA_DIR.glob("*.csv") if path.is_file())
+        if paths:
+            return paths[0]
+    return SOURCE_DATA_DIR / "songs.csv"
+
+
+def apply_derived_output_defaults(args: argparse.Namespace) -> argparse.Namespace:
+    if args.input is None:
+        args.input = first_source_csv_path()
+
+    dataset = dataset_name_from_path(args.input)
+    if args.output is None:
+        args.output = TAG_DATA_DIR / f"{dataset}_song_tags.csv"
+    if args.jsonl_output is None:
+        args.jsonl_output = TAG_DATA_DIR / f"{dataset}_song_tags.jsonl"
+    if args.matches_output is None:
+        args.matches_output = AUDIO_FEATURE_DATA_DIR / f"{dataset}_song_matches.csv"
+    if args.audio_features_csv is None:
+        args.audio_features_csv = AUDIO_FEATURE_DATA_DIR / f"{dataset}_song_features.csv"
+    if args.audio_features_parquet is None:
+        args.audio_features_parquet = AUDIO_FEATURE_DATA_DIR / f"{dataset}_song_features.parquet"
+    if args.mert_index is None:
+        args.mert_index = MERT_DATA_DIR / f"{dataset}_mert_index.csv"
+    if args.mert_clusters_output is None:
+        args.mert_clusters_output = MERT_DATA_DIR / f"{dataset}_mert_clusters.csv"
+    return args
 
 
 def safe_text(value: Any) -> str:
@@ -999,10 +1033,123 @@ def analyze_audio_file(path: Path, seconds: float, source_separator: dict[str, A
         return {"audio_error": str(exc)}
 
 
-def write_jsonl(path: Path, df: pd.DataFrame) -> None:
+def normalize_output_song_ids(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "song_id" not in df.columns:
+        return df.copy()
+    result = df.copy()
+    result["song_id"] = result["song_id"].astype("string").str.strip()
+    return result[result["song_id"].fillna("").ne("")]
+
+
+def merge_existing_output(path: Path, df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    result = normalize_output_song_ids(df)
+    if not path.exists() or path.stat().st_size == 0:
+        return result, False
+
+    existing = pd.read_csv(path, dtype={"song_id": "string"})
+    existing.columns = [col.strip() for col in existing.columns]
+    existing = normalize_output_song_ids(existing)
+    columns = list(dict.fromkeys([*existing.columns, *result.columns]))
+    merged = pd.concat(
+        [existing.reindex(columns=columns), result.reindex(columns=columns)],
+        ignore_index=True,
+        sort=False,
+    )
+    return merge_latest_nonempty_rows(merged), True
+
+
+def read_jsonl_frame(path: Path) -> pd.DataFrame:
+    rows = []
+    with path.open("r", encoding="utf-8-sig") as file:
+        for line in file:
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if isinstance(record, dict):
+                rows.append(record)
+    return pd.DataFrame(rows)
+
+
+def merge_existing_jsonl_output(path: Path, df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    result = normalize_output_song_ids(df)
+    if not path.exists() or path.stat().st_size == 0:
+        return result, False
+
+    existing = read_jsonl_frame(path)
+    existing = normalize_output_song_ids(existing)
+    columns = list(dict.fromkeys([*existing.columns, *result.columns]))
+    merged = pd.concat(
+        [existing.reindex(columns=columns), result.reindex(columns=columns)],
+        ignore_index=True,
+        sort=False,
+    )
+    return merge_latest_nonempty_rows(merged), True
+
+
+def merge_latest_nonempty_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "song_id" not in df.columns:
+        return df
+
+    merged = normalize_output_song_ids(df)
+    merged["_output_position"] = range(len(merged))
+    song_order = (
+        merged[["song_id", "_output_position"]]
+        .drop_duplicates("song_id", keep="last")
+        .sort_values("_output_position", kind="stable")
+    )
+    result = song_order[["song_id"]].reset_index(drop=True)
+
+    for col in [item for item in merged.columns if item not in {"song_id", "_output_position"}]:
+        values = merged[["song_id", col]].copy()
+        values[col] = values[col].fillna("").astype(str).str.strip()
+        values = values[values[col].ne("")]
+        if values.empty:
+            continue
+        latest_values = values.drop_duplicates("song_id", keep="last")
+        result = result.merge(latest_values, on="song_id", how="left")
+
+    return result.fillna("")
+
+
+def print_append_notice(label: str, path: Path, existing: bool, rows: int) -> None:
+    if existing:
+        print(f"{label} 已存在，将追加合并而不是覆盖：{path}（合并后 {rows} 行）")
+
+
+def write_csv_output(path: Path, df: pd.DataFrame, label: str) -> pd.DataFrame:
+    output_df, existing = merge_existing_output(path, df)
+    print_append_notice(label, path, existing, len(output_df))
+    output_df.to_csv(path, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
+    return output_df
+
+
+def write_parquet_output(path: Path, df: pd.DataFrame, label: str) -> None:
+    output_df = normalize_output_song_ids(df)
+    existing = path.exists() and path.stat().st_size > 0
+    if existing:
+        existing_df = pd.read_parquet(path)
+        existing_df.columns = [col.strip() for col in existing_df.columns]
+        existing_df = normalize_output_song_ids(existing_df)
+        columns = list(dict.fromkeys([*existing_df.columns, *output_df.columns]))
+        output_df = pd.concat(
+            [existing_df.reindex(columns=columns), output_df.reindex(columns=columns)],
+            ignore_index=True,
+            sort=False,
+        )
+        output_df = merge_latest_nonempty_rows(output_df)
+    print_append_notice(label, path, existing, len(output_df))
+    output_df.to_parquet(path, index=False)
+
+
+def write_jsonl(path: Path, df: pd.DataFrame) -> pd.DataFrame:
+    output_df, existing = merge_existing_jsonl_output(path, df)
+    output_df = output_df.fillna("")
+    print_append_notice("标签 JSONL", path, existing, len(output_df))
     with path.open("w", encoding="utf-8", newline="") as file:
-        for record in df.to_dict(orient="records"):
+        for record in output_df.to_dict(orient="records"):
             file.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return output_df
 
 
 def load_mert_audio(mert: Any, path: Path, target_sr: int, max_seconds: float | None) -> tuple[Any, int]:
@@ -1222,7 +1369,8 @@ def build_song_tags(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFram
         tag_rows.append(tag_row)
 
     tags_df = pd.DataFrame(tag_rows)
-    if args.reuse_matches and args.matches_output.exists():
+    reused_matches = bool(args.reuse_matches and args.matches_output.exists())
+    if reused_matches:
         matches_df = pd.read_csv(args.matches_output, dtype={"song_id": "string"})
         matches_df.columns = [col.strip() for col in matches_df.columns]
     else:
@@ -1233,7 +1381,8 @@ def build_song_tags(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFram
             show_progress=not args.no_progress,
         )
     if not matches_df.empty:
-        matches_df.to_csv(args.matches_output, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
+        if not reused_matches:
+            matches_df = write_csv_output(args.matches_output, matches_df, "音频匹配 CSV")
         best_matches = matches_df[
             [
                 "song_id",
@@ -1327,9 +1476,9 @@ def build_song_tags(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFram
             audio_feature_rows.append(features)
         if audio_feature_rows:
             audio_df = pd.DataFrame(audio_feature_rows)
-            audio_df.to_csv(args.audio_features_csv, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
+            audio_df = write_csv_output(args.audio_features_csv, audio_df, "音频特征 CSV")
             try:
-                audio_df.to_parquet(args.audio_features_parquet, index=False)
+                write_parquet_output(args.audio_features_parquet, audio_df, "音频特征 Parquet")
             except Exception as exc:
                 print(f"Skipped parquet audio feature output: {exc}")
             tags_df = tags_df.merge(audio_df, on="song_id", how="left")
@@ -1404,30 +1553,30 @@ def build_song_tags(args: argparse.Namespace) -> tuple[pd.DataFrame, pd.DataFram
                 axis=1,
             )
 
-    tags_df.to_csv(args.output, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
+    tags_output_df = write_csv_output(args.output, tags_df, "标签 CSV")
     write_jsonl(args.jsonl_output, tags_df)
-    return tags_df, matches_df
+    return tags_output_df, matches_df
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build explainable tags for local music library.")
-    parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="Liked-song CSV path.")
+    parser.add_argument("--input", type=Path, default=None, help="Song CSV path. Defaults to the first data/source/*.csv.")
     parser.add_argument("--lyrics-dir", type=Path, default=DEFAULT_LYRICS_DIR, help="Lyrics directory.")
     parser.add_argument("--audio-dir", type=Path, default=DEFAULT_AUDIO_DIR, help="Local music directory.")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Output song tag CSV.")
-    parser.add_argument("--jsonl-output", type=Path, default=DEFAULT_JSONL, help="Output song tag JSONL.")
-    parser.add_argument("--matches-output", type=Path, default=DEFAULT_MATCHES, help="Output audio match CSV.")
+    parser.add_argument("--output", type=Path, default=None, help="Output song tag CSV. Derived from --input when omitted.")
+    parser.add_argument("--jsonl-output", type=Path, default=None, help="Output song tag JSONL. Derived from --input when omitted.")
+    parser.add_argument("--matches-output", type=Path, default=None, help="Output audio match CSV. Derived from --input when omitted.")
     parser.add_argument(
         "--audio-features-csv",
         type=Path,
-        default=DEFAULT_AUDIO_FEATURES_CSV,
-        help="Output audio feature CSV when --analyze-audio is enabled.",
+        default=None,
+        help="Output audio feature CSV when --analyze-audio is enabled. Derived from --input when omitted.",
     )
     parser.add_argument(
         "--audio-features-parquet",
         type=Path,
-        default=DEFAULT_AUDIO_FEATURES_PARQUET,
-        help="Output audio feature parquet when --analyze-audio is enabled.",
+        default=None,
+        help="Output audio feature parquet when --analyze-audio is enabled. Derived from --input when omitted.",
     )
     parser.add_argument("--match-threshold", type=float, default=0.84, help="Minimum fuzzy match score.")
     parser.add_argument("--reuse-matches", action="store_true", help="Reuse the existing audio match CSV.")
@@ -1473,8 +1622,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--extract-mert", action="store_true", help="Extract MERT embeddings for matched local audio.")
     parser.add_argument("--mert-model-dir", type=Path, default=DEFAULT_MERT_MODEL_DIR, help="Local MERT model directory.")
     parser.add_argument("--mert-embeddings-dir", type=Path, default=DEFAULT_MERT_EMBEDDINGS_DIR)
-    parser.add_argument("--mert-index", type=Path, default=DEFAULT_MERT_INDEX)
-    parser.add_argument("--mert-clusters-output", type=Path, default=DEFAULT_MERT_CLUSTERS)
+    parser.add_argument("--mert-index", type=Path, default=None)
+    parser.add_argument("--mert-clusters-output", type=Path, default=None)
     parser.add_argument("--mert-limit", type=int, default=0, help="Limit MERT extraction rows; 0 means all matched audio.")
     parser.add_argument("--overwrite-mert", action="store_true", help="Recompute existing MERT .npy files.")
     parser.add_argument("--mert-max-seconds", type=float, default=20.0, help="Seconds loaded per song for MERT.")
@@ -1488,7 +1637,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mert-clusters", type=int, default=12)
     parser.add_argument("--mert-neighbors", type=int, default=5)
     parser.add_argument("--no-progress", action="store_true", help="Disable progress bars.")
-    return parser.parse_args()
+    return apply_derived_output_defaults(parser.parse_args())
 
 
 def main() -> None:

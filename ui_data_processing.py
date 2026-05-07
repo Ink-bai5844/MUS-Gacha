@@ -15,16 +15,12 @@ import streamlit as st
 from config import (
     AUDIO_FEATURE_DATA_DIR,
     CACHE_DIR,
-    DATA_FILE,
     LYRICS_DIR,
-    MERT_CLUSTERS_FILE,
     MERT_DATA_DIR,
-    MERT_INDEX_FILE,
     PREPROCESSED_DATA_FILE,
     PREPROCESSED_HASH_FILE,
     SOURCE_DATA_DIR,
     TAG_DATA_DIR,
-    TAGS_FILE,
 )
 
 
@@ -36,10 +32,6 @@ DEFAULT_JSON_DIR = SOURCE_DATA_DIR / "ink_bai_liked_json"
 DEFAULT_DB_FILE = SOURCE_DATA_DIR / "ink_bai_liked.sqlite3"
 DEFAULT_LIBRARY_FILE = PROJECT_ROOT / "QCloudMusicApi" / "build" / "QCloudMusicApi" / "QCloudMusicApi.dll"
 DEFAULT_COOKIE_FILE = PROJECT_ROOT / "cookie.txt"
-DEFAULT_TAG_JSONL = TAG_DATA_DIR / "song_tags.jsonl"
-DEFAULT_AUDIO_MATCHES = AUDIO_FEATURE_DATA_DIR / "audio_song_matches.csv"
-DEFAULT_AUDIO_FEATURES_CSV = AUDIO_FEATURE_DATA_DIR / "audio_features.csv"
-DEFAULT_AUDIO_FEATURES_PARQUET = AUDIO_FEATURE_DATA_DIR / "audio_features.parquet"
 DEFAULT_AUDIO_DIR = Path(r"H:\音乐")
 DEFAULT_MERT_MODEL_DIR = PROJECT_ROOT / "models" / "MERT-v1-330M"
 DEFAULT_MERT_EMBEDDINGS_DIR = MERT_DATA_DIR / "embeddings"
@@ -49,6 +41,55 @@ DEFAULT_RESOLVE_HOSTS = [
     "interface.music.163.com=117.135.207.67",
     "music.163.com=112.29.230.13",
 ]
+
+
+def strip_dataset_suffix(name: str) -> str:
+    clean = name.strip().replace(" ", "_")
+    for suffix in ("_song_tags", "_song_features", "_song_matches", "_songs", "_json"):
+        if clean.endswith(suffix):
+            clean = clean[: -len(suffix)]
+            break
+    return clean or name.strip() or "songs"
+
+
+def dataset_name_from_path(path_text: str | Path, is_dir: bool = False) -> str:
+    path = Path(str(path_text).strip())
+    name = path.name if is_dir else path.stem
+    if not name:
+        name = path.stem or "songs"
+    return strip_dataset_suffix(name)
+
+
+def source_csv_default_for_dataset(dataset: str) -> str:
+    return display_path(SOURCE_DATA_DIR / f"{dataset}_songs.csv")
+
+
+def tag_csv_default_for_dataset(dataset: str) -> str:
+    return display_path(TAG_DATA_DIR / f"{dataset}_song_tags.csv")
+
+
+def tag_jsonl_default_for_dataset(dataset: str) -> str:
+    return display_path(TAG_DATA_DIR / f"{dataset}_song_tags.jsonl")
+
+
+def audio_matches_default_for_dataset(dataset: str) -> str:
+    return display_path(AUDIO_FEATURE_DATA_DIR / f"{dataset}_song_matches.csv")
+
+
+def audio_features_csv_default_for_dataset(dataset: str) -> str:
+    return display_path(AUDIO_FEATURE_DATA_DIR / f"{dataset}_song_features.csv")
+
+
+def audio_features_parquet_default_for_dataset(dataset: str) -> str:
+    return display_path(AUDIO_FEATURE_DATA_DIR / f"{dataset}_song_features.parquet")
+
+
+def mert_index_default_for_dataset(dataset: str) -> str:
+    return display_path(MERT_DATA_DIR / f"{dataset}_mert_index.csv")
+
+
+def mert_clusters_default_for_dataset(dataset: str) -> str:
+    return display_path(MERT_DATA_DIR / f"{dataset}_mert_clusters.csv")
 
 
 def project_path(path_value: str | Path) -> Path:
@@ -91,10 +132,96 @@ def cached_csv_rows(path_text: str, cache_token: int) -> int:
         return 0
 
 
+@st.cache_data(show_spinner=False, ttl=600)
+def cached_jsonl_rows(path_text: str, cache_token: int) -> int:
+    path = project_path(path_text)
+    if not path.exists() or not path.is_file():
+        return 0
+    try:
+        return sum(1 for line in path.open("r", encoding="utf-8-sig", errors="replace") if line.strip())
+    except OSError:
+        return 0
+
+
 def source_csv_paths() -> list[Path]:
     if not SOURCE_DATA_DIR.exists():
         return []
     return sorted(path for path in SOURCE_DATA_DIR.glob("*.csv") if path.is_file())
+
+
+def default_source_csv_path() -> Path:
+    paths = source_csv_paths()
+    return paths[0] if paths else SOURCE_DATA_DIR / "songs.csv"
+
+
+def default_source_csv_text() -> str:
+    return display_path(default_source_csv_path())
+
+
+def default_dataset_name() -> str:
+    return dataset_name_from_path(default_source_csv_path())
+
+
+def default_tag_csv_text() -> str:
+    return tag_csv_default_for_dataset(default_dataset_name())
+
+
+def default_tag_jsonl_text() -> str:
+    return tag_jsonl_default_for_dataset(default_dataset_name())
+
+
+def default_audio_matches_text() -> str:
+    return audio_matches_default_for_dataset(default_dataset_name())
+
+
+def default_audio_features_csv_text() -> str:
+    return audio_features_csv_default_for_dataset(default_dataset_name())
+
+
+def default_audio_features_parquet_text() -> str:
+    return audio_features_parquet_default_for_dataset(default_dataset_name())
+
+
+def default_mert_index_text() -> str:
+    return mert_index_default_for_dataset(default_dataset_name())
+
+
+def default_mert_clusters_text() -> str:
+    return mert_clusters_default_for_dataset(default_dataset_name())
+
+
+def tag_csv_paths() -> list[Path]:
+    if not TAG_DATA_DIR.exists():
+        return []
+    return sorted(path for path in TAG_DATA_DIR.glob("*.csv") if path.is_file())
+
+
+def tag_jsonl_paths() -> list[Path]:
+    if not TAG_DATA_DIR.exists():
+        return []
+    return sorted(path for path in TAG_DATA_DIR.glob("*.jsonl") if path.is_file())
+
+
+def audio_match_csv_paths() -> list[Path]:
+    if not AUDIO_FEATURE_DATA_DIR.exists():
+        return []
+    return sorted(path for path in AUDIO_FEATURE_DATA_DIR.glob("*audio_song_matches*.csv") if path.is_file())
+
+
+def audio_feature_csv_paths() -> list[Path]:
+    if not AUDIO_FEATURE_DATA_DIR.exists():
+        return []
+    return sorted(path for path in AUDIO_FEATURE_DATA_DIR.glob("*audio_features*.csv") if path.is_file())
+
+
+def mert_csv_paths() -> list[Path]:
+    if not MERT_DATA_DIR.exists():
+        return []
+    paths = [
+        *MERT_DATA_DIR.glob("*mert_index*.csv"),
+        *MERT_DATA_DIR.glob("*mert_clusters*.csv"),
+    ]
+    return sorted(path for path in dict.fromkeys(paths) if path.is_file())
 
 
 @st.cache_data(show_spinner=False, ttl=600)
@@ -106,6 +233,14 @@ def cached_source_csv_rows(source_dir_text: str, cache_token: int) -> int:
     for path in sorted(source_dir.glob("*.csv")):
         total += max(0, cached_csv_rows(display_path(path), cache_token))
     return total
+
+
+def summed_csv_rows(paths: list[Path]) -> int:
+    return sum(max(0, cached_csv_rows(display_path(path), stats_token())) for path in paths)
+
+
+def summed_jsonl_rows(paths: list[Path]) -> int:
+    return sum(max(0, cached_jsonl_rows(display_path(path), stats_token())) for path in paths)
 
 
 def stats_loaded() -> bool:
@@ -132,6 +267,18 @@ def get_optional_source_csv_rows() -> str:
     if not stats_loaded():
         return "未统计"
     return str(max(0, cached_source_csv_rows(display_path(SOURCE_DATA_DIR), stats_token())))
+
+
+def get_optional_tag_result_rows() -> str:
+    if not stats_loaded():
+        return "未统计"
+    return str(summed_csv_rows(tag_csv_paths()) + summed_jsonl_rows(tag_jsonl_paths()))
+
+
+def get_optional_audio_result_rows() -> str:
+    if not stats_loaded():
+        return "未统计"
+    return str(summed_csv_rows(audio_match_csv_paths()) + summed_csv_rows(audio_feature_csv_paths()))
 
 
 def path_exists_text(path_value: str | Path) -> str:
@@ -176,6 +323,7 @@ def run_command(command: list[str], timeout: int = DEFAULT_TIMEOUT, live_output=
             "stdout": "",
             "stderr": str(exc),
             "timed_out": False,
+            "run_id": str(time.time_ns()),
         }
 
     output_queue: queue.Queue[str | None] = queue.Queue()
@@ -236,6 +384,7 @@ def run_command(command: list[str], timeout: int = DEFAULT_TIMEOUT, live_output=
         "stdout": "".join(output_parts).strip(),
         "stderr": "",
         "timed_out": timed_out,
+        "run_id": str(time.time_ns()),
     }
 
 
@@ -262,7 +411,8 @@ def render_result(key: str, empty_label: str | None = None) -> None:
         if result["stderr"]:
             output_parts.append("[stderr]\n" + result["stderr"])
         output_text = "\n\n".join(output_parts) or "脚本没有输出。"
-        st.text_area("输出内容", output_text, height=320, key=f"{key}-script-output")
+        output_key = f"{key}-script-output-{result.get('run_id', 'legacy')}"
+        st.text_area("输出内容", output_text, height=320, key=output_key)
 
 
 def save_inline_result(key: str, command_label: str, stdout: str, returncode: int = 0, stderr: str = "") -> None:
@@ -272,6 +422,7 @@ def save_inline_result(key: str, command_label: str, stdout: str, returncode: in
         "stdout": stdout,
         "stderr": stderr,
         "timed_out": False,
+        "run_id": str(time.time_ns()),
     }
 
 
@@ -308,6 +459,106 @@ def add_flag(command: list[str], flag: str, enabled: bool) -> None:
         command.append(flag)
 
 
+def confirm_json_snapshot_defaults(input_key: str, output_key: str, lyrics_key: str) -> None:
+    dataset = dataset_name_from_path(
+        st.session_state.get(input_key, display_path(DEFAULT_JSON_DIR)),
+        is_dir=True,
+    )
+    st.session_state[output_key] = source_csv_default_for_dataset(dataset)
+    st.session_state[lyrics_key] = display_path(LYRICS_DIR)
+
+
+def confirm_song_table_defaults(
+    input_key: str,
+    output_key: str,
+    jsonl_key: str,
+    matches_key: str,
+    audio_features_csv_key: str | None = None,
+    audio_features_parquet_key: str | None = None,
+    mert_index_key: str | None = None,
+    mert_clusters_key: str | None = None,
+) -> None:
+    dataset = dataset_name_from_path(st.session_state.get(input_key, default_source_csv_text()))
+    st.session_state[output_key] = tag_csv_default_for_dataset(dataset)
+    st.session_state[jsonl_key] = tag_jsonl_default_for_dataset(dataset)
+    st.session_state[matches_key] = audio_matches_default_for_dataset(dataset)
+    if audio_features_csv_key:
+        st.session_state[audio_features_csv_key] = audio_features_csv_default_for_dataset(dataset)
+    if audio_features_parquet_key:
+        st.session_state[audio_features_parquet_key] = audio_features_parquet_default_for_dataset(dataset)
+    if mert_index_key:
+        st.session_state[mert_index_key] = mert_index_default_for_dataset(dataset)
+    if mert_clusters_key:
+        st.session_state[mert_clusters_key] = mert_clusters_default_for_dataset(dataset)
+
+
+def text_input_with_confirm(
+    label: str,
+    default_value: str,
+    key: str,
+    on_confirm,
+    confirm_args: tuple,
+) -> str:
+    input_col, confirm_col = st.columns([5, 1])
+    with input_col:
+        value = session_text_input(label, default_value, key)
+    with confirm_col:
+        st.markdown("<div style='height: 1.85rem'></div>", unsafe_allow_html=True)
+        st.form_submit_button(
+            "确认",
+            width="stretch",
+            key=f"{key}-confirm",
+            on_click=on_confirm,
+            args=confirm_args,
+        )
+    return value
+
+
+def source_csv_options(default_value: str | Path) -> list[str]:
+    options = [display_path(path) for path in source_csv_paths()]
+    default_text = str(default_value)
+    current_values = [
+        str(st.session_state.get(key, "")).strip()
+        for key in ("basic-input", "audio-input", "mert-input")
+    ]
+    for item in [default_text, *current_values]:
+        if item and item not in options:
+            options.append(item)
+    return options or [default_text]
+
+
+def source_csv_select_with_confirm(
+    label: str,
+    default_value: str,
+    key: str,
+    on_confirm,
+    confirm_args: tuple,
+) -> str:
+    options = source_csv_options(default_value)
+    if key not in st.session_state or st.session_state[key] not in options:
+        st.session_state[key] = options[0]
+
+    input_col, confirm_col = st.columns([5, 1])
+    with input_col:
+        value = st.selectbox(label, options, key=key)
+    with confirm_col:
+        st.markdown("<div style='height: 1.85rem'></div>", unsafe_allow_html=True)
+        st.form_submit_button(
+            "确认",
+            width="stretch",
+            key=f"{key}-confirm",
+            on_click=on_confirm,
+            args=confirm_args,
+        )
+    return value
+
+
+def session_text_input(label: str, default_value: str, key: str, **kwargs) -> str:
+    if key not in st.session_state:
+        st.session_state[key] = default_value
+    return st.text_input(label, key=key, **kwargs)
+
+
 def add_resolve_hosts(command: list[str], hosts_text: str) -> None:
     for host in re.split(r"[\n,，]+", hosts_text):
         host = host.strip()
@@ -340,24 +591,27 @@ def render_overview() -> None:
     with col_hint:
         st.caption("大目录和 CSV 行数默认不自动扫描，点刷新后再统计。")
 
-    status_cols = st.columns(5)
+    status_cols = st.columns(6)
     status_cols[0].metric("JSON 快照", get_optional_count(DEFAULT_JSON_DIR, "*.json"))
     status_cols[1].metric("歌词 TXT", get_optional_count(LYRICS_DIR, "*.txt"))
     status_cols[2].metric("源 CSV 总行", get_optional_source_csv_rows())
-    status_cols[3].metric("标签 CSV 行", get_optional_csv_rows(TAGS_FILE))
-    status_cols[4].metric("MERT 向量", get_optional_count(DEFAULT_MERT_EMBEDDINGS_DIR, "*.npy"))
+    status_cols[3].metric("标签结果行", get_optional_tag_result_rows())
+    status_cols[4].metric("音频结果行", get_optional_audio_result_rows())
+    status_cols[5].metric("MERT 向量", get_optional_count(DEFAULT_MERT_EMBEDDINGS_DIR, "*.npy"))
 
     cache_rows = [
         ("源 CSV 目录", SOURCE_DATA_DIR),
-        ("默认导出主表", DATA_FILE),
+        ("首个源 CSV", default_source_csv_path()),
         ("原始 JSON 目录", DEFAULT_JSON_DIR),
         ("歌词目录", LYRICS_DIR),
-        ("标签 CSV", TAGS_FILE),
-        ("标签 JSONL", DEFAULT_TAG_JSONL),
-        ("本地音频匹配", DEFAULT_AUDIO_MATCHES),
-        ("音频特征 CSV", DEFAULT_AUDIO_FEATURES_CSV),
-        ("MERT 索引", MERT_INDEX_FILE),
-        ("MERT 聚类", MERT_CLUSTERS_FILE),
+        ("标签目录", TAG_DATA_DIR),
+        ("推导标签 CSV", default_tag_csv_text()),
+        ("推导标签 JSONL", default_tag_jsonl_text()),
+        ("音频特征目录", AUDIO_FEATURE_DATA_DIR),
+        ("推导本地音频匹配", default_audio_matches_text()),
+        ("推导音频特征 CSV", default_audio_features_csv_text()),
+        ("推导 MERT 索引", default_mert_index_text()),
+        ("推导 MERT 聚类", default_mert_clusters_text()),
         ("SQLite 原始库", DEFAULT_DB_FILE),
         ("预处理 DataFrame", PREPROCESSED_DATA_FILE),
         ("预处理 Hash", PREPROCESSED_HASH_FILE),
@@ -547,9 +801,15 @@ def render_collection_tools() -> None:
 def render_csv_tools() -> None:
     with st.expander("JSON 快照导出 CSV/歌词", expanded=True):
         with st.form("process-export-json"):
-            input_dir = st.text_input("JSON 快照目录", display_path(DEFAULT_JSON_DIR))
-            output_file = st.text_input("输出 CSV", display_path(DATA_FILE))
-            lyrics_dir = st.text_input("歌词输出目录", display_path(LYRICS_DIR))
+            input_dir = text_input_with_confirm(
+                "JSON 快照目录",
+                display_path(DEFAULT_JSON_DIR),
+                "export-json-input-dir",
+                confirm_json_snapshot_defaults,
+                ("export-json-input-dir", "export-json-output", "export-json-lyrics"),
+            )
+            output_file = session_text_input("输出 CSV", default_source_csv_text(), key="export-json-output")
+            lyrics_dir = session_text_input("歌词输出目录", display_path(LYRICS_DIR), key="export-json-lyrics")
             include_lyrics = st.checkbox("CSV 内包含完整歌词列", value=False)
             keep_no_copyright = st.checkbox("保留暂无版权歌曲", value=False)
             write_lyrics_files = st.checkbox("写出独立歌词 TXT", value=True)
@@ -575,13 +835,20 @@ def render_csv_tools() -> None:
 
     with st.expander("CSV 快速预览", expanded=False):
         preview_options = {
-            "默认歌曲主表": DATA_FILE,
-            "标签 CSV": TAGS_FILE,
-            "本地音频匹配": DEFAULT_AUDIO_MATCHES,
-            "音频特征": DEFAULT_AUDIO_FEATURES_CSV,
-            "MERT 索引": MERT_INDEX_FILE,
-            "MERT 聚类": MERT_CLUSTERS_FILE,
+            "首个源 CSV": default_source_csv_path(),
+            "推导 MERT 索引": project_path(default_mert_index_text()),
+            "推导 MERT 聚类": project_path(default_mert_clusters_text()),
         }
+        for path in source_csv_paths():
+            preview_options[f"源 CSV / {path.name}"] = path
+        for path in tag_csv_paths():
+            preview_options[f"标签 CSV / {path.name}"] = path
+        for path in audio_match_csv_paths():
+            preview_options[f"音频匹配 / {path.name}"] = path
+        for path in audio_feature_csv_paths():
+            preview_options[f"音频特征 / {path.name}"] = path
+        for path in mert_csv_paths():
+            preview_options[f"MERT / {path.name}"] = path
         selected_name = st.selectbox("文件", list(preview_options), key="preview-csv-name")
         rows = st.number_input("预览行数", 5, 200, 20, 5, key="preview-csv-rows")
         preview_path = project_path(preview_options[selected_name])
@@ -603,8 +870,9 @@ def base_tag_command(
     output_csv: str,
     jsonl_output: str,
     matches_output: str,
+    audio_features_csv: str = "",
 ) -> list[str]:
-    return [
+    command = [
         PYTHON,
         str(PROJECT_ROOT / "data_processing" / "build_song_tags.py"),
         "--input",
@@ -620,23 +888,74 @@ def base_tag_command(
         "--matches-output",
         matches_output,
     ]
+    add_arg(command, "--audio-features-csv", audio_features_csv)
+    return command
+
+
+def warn_existing_outputs(outputs: list[tuple[str, str]]) -> None:
+    resolved_targets: dict[Path, list[str]] = {}
+    for label, path_text in outputs:
+        if not str(path_text).strip():
+            continue
+        path = project_path(path_text)
+        resolved_targets.setdefault(path.resolve(), []).append(label)
+        if path.exists():
+            st.warning(f"{label} 已存在：{display_path(path)}。本次会追加合并，不会覆盖旧数据。")
+
+    duplicate_targets = {
+        path: labels for path, labels in resolved_targets.items() if len(labels) > 1
+    }
+    for path, labels in duplicate_targets.items():
+        st.warning(f"{'、'.join(labels)} 指向同一个输出文件：{display_path(path)}。")
 
 
 def render_tag_tools() -> None:
     with st.expander("基础标签与本地音频匹配", expanded=True):
         with st.form("process-basic-tags"):
-            input_csv = st.text_input("歌曲主表", display_path(DATA_FILE), key="basic-input")
+            input_csv = source_csv_select_with_confirm(
+                "歌曲主表",
+                default_source_csv_text(),
+                "basic-input",
+                confirm_song_table_defaults,
+                (
+                    "basic-input",
+                    "basic-output",
+                    "basic-jsonl",
+                    "basic-matches",
+                    "basic-audio-features",
+                ),
+            )
             lyrics_dir = st.text_input("歌词目录", display_path(LYRICS_DIR), key="basic-lyrics")
             audio_dir = st.text_input("本地音乐目录", str(DEFAULT_AUDIO_DIR), key="basic-audio")
-            output_csv = st.text_input("输出标签 CSV", display_path(TAGS_FILE), key="basic-output")
-            jsonl_output = st.text_input("输出标签 JSONL", display_path(DEFAULT_TAG_JSONL), key="basic-jsonl")
-            matches_output = st.text_input("输出音频匹配 CSV", display_path(DEFAULT_AUDIO_MATCHES), key="basic-matches")
+            output_csv = session_text_input("输出标签 CSV", default_tag_csv_text(), key="basic-output")
+            jsonl_output = session_text_input("输出标签 JSONL", default_tag_jsonl_text(), key="basic-jsonl")
+            matches_output = session_text_input("输出音频匹配 CSV", default_audio_matches_text(), key="basic-matches")
+            audio_features_csv = session_text_input(
+                "已有音频特征 CSV",
+                default_audio_features_csv_text(),
+                key="basic-audio-features",
+            )
             match_threshold = st.number_input("本地音频匹配阈值", 0.0, 1.0, 0.84, 0.01)
             reuse_matches = st.checkbox("复用已有音频匹配结果", value=False, key="basic-reuse")
             no_progress = st.checkbox("关闭进度条输出", value=True, key="basic-no-progress")
             timeout = st.number_input("超时秒数", 10, 86400, 3600, 60, key="basic-tags-timeout")
+            warn_existing_outputs(
+                [
+                    ("输出标签 CSV", output_csv),
+                    ("输出标签 JSONL", jsonl_output),
+                    ("输出音频匹配 CSV", matches_output),
+                ]
+            )
 
-            command = base_tag_command(input_csv, lyrics_dir, audio_dir, output_csv, jsonl_output, matches_output)
+            command = base_tag_command(
+                input_csv,
+                lyrics_dir,
+                audio_dir,
+                output_csv,
+                jsonl_output,
+                matches_output,
+                audio_features_csv,
+            )
             command.extend(["--match-threshold", str(float(match_threshold))])
             add_flag(command, "--reuse-matches", reuse_matches)
             add_flag(command, "--no-progress", no_progress)
@@ -647,14 +966,35 @@ def render_tag_tools() -> None:
 
     with st.expander("音频特征与声源分离", expanded=False):
         with st.form("process-audio-features"):
-            input_csv = st.text_input("歌曲主表", display_path(DATA_FILE), key="audio-input")
+            input_csv = source_csv_select_with_confirm(
+                "歌曲主表",
+                default_source_csv_text(),
+                "audio-input",
+                confirm_song_table_defaults,
+                (
+                    "audio-input",
+                    "audio-output",
+                    "audio-jsonl",
+                    "audio-matches",
+                    "audio-features-csv",
+                    "audio-features-parquet",
+                ),
+            )
             lyrics_dir = st.text_input("歌词目录", display_path(LYRICS_DIR), key="audio-lyrics")
             audio_dir = st.text_input("本地音乐目录", str(DEFAULT_AUDIO_DIR), key="audio-audio")
-            output_csv = st.text_input("输出标签 CSV", display_path(TAGS_FILE), key="audio-output")
-            jsonl_output = st.text_input("输出标签 JSONL", display_path(DEFAULT_TAG_JSONL), key="audio-jsonl")
-            matches_output = st.text_input("音频匹配 CSV", display_path(DEFAULT_AUDIO_MATCHES), key="audio-matches")
-            audio_features_csv = st.text_input("音频特征 CSV", display_path(DEFAULT_AUDIO_FEATURES_CSV))
-            audio_features_parquet = st.text_input("音频特征 Parquet", display_path(DEFAULT_AUDIO_FEATURES_PARQUET))
+            output_csv = session_text_input("输出标签 CSV", default_tag_csv_text(), key="audio-output")
+            jsonl_output = session_text_input("输出标签 JSONL", default_tag_jsonl_text(), key="audio-jsonl")
+            matches_output = session_text_input("音频匹配 CSV", default_audio_matches_text(), key="audio-matches")
+            audio_features_csv = session_text_input(
+                "音频特征 CSV",
+                default_audio_features_csv_text(),
+                key="audio-features-csv",
+            )
+            audio_features_parquet = session_text_input(
+                "音频特征 Parquet",
+                default_audio_features_parquet_text(),
+                key="audio-features-parquet",
+            )
 
             col_audio_1, col_audio_2, col_audio_3 = st.columns(3)
             with col_audio_1:
@@ -674,6 +1014,15 @@ def render_tag_tools() -> None:
             )
             source_checkpoint = st.text_input("HDemucs checkpoint", display_path(DEFAULT_HDEMUCS_CHECKPOINT))
             no_progress = st.checkbox("关闭进度条输出", value=True, key="audio-no-progress")
+            warn_existing_outputs(
+                [
+                    ("输出标签 CSV", output_csv),
+                    ("输出标签 JSONL", jsonl_output),
+                    ("音频匹配 CSV", matches_output),
+                    ("音频特征 CSV", audio_features_csv),
+                    ("音频特征 Parquet", audio_features_parquet),
+                ]
+            )
 
             command = base_tag_command(input_csv, lyrics_dir, audio_dir, output_csv, jsonl_output, matches_output)
             command.extend(
@@ -709,16 +1058,36 @@ def render_tag_tools() -> None:
 
     with st.expander("MERT Embedding 与聚类", expanded=False):
         with st.form("process-mert"):
-            input_csv = st.text_input("歌曲主表", display_path(DATA_FILE), key="mert-input")
+            input_csv = source_csv_select_with_confirm(
+                "歌曲主表",
+                default_source_csv_text(),
+                "mert-input",
+                confirm_song_table_defaults,
+                (
+                    "mert-input",
+                    "mert-output",
+                    "mert-jsonl",
+                    "mert-matches",
+                    "mert-audio-features",
+                    None,
+                    "mert-index",
+                    "mert-clusters-output",
+                ),
+            )
             lyrics_dir = st.text_input("歌词目录", display_path(LYRICS_DIR), key="mert-lyrics")
             audio_dir = st.text_input("本地音乐目录", str(DEFAULT_AUDIO_DIR), key="mert-audio")
-            output_csv = st.text_input("输出标签 CSV", display_path(TAGS_FILE), key="mert-output")
-            jsonl_output = st.text_input("输出标签 JSONL", display_path(DEFAULT_TAG_JSONL), key="mert-jsonl")
-            matches_output = st.text_input("音频匹配 CSV", display_path(DEFAULT_AUDIO_MATCHES), key="mert-matches")
+            output_csv = session_text_input("输出标签 CSV", default_tag_csv_text(), key="mert-output")
+            jsonl_output = session_text_input("输出标签 JSONL", default_tag_jsonl_text(), key="mert-jsonl")
+            matches_output = session_text_input("音频匹配 CSV", default_audio_matches_text(), key="mert-matches")
+            audio_features_csv = session_text_input(
+                "已有音频特征 CSV",
+                default_audio_features_csv_text(),
+                key="mert-audio-features",
+            )
             model_dir = st.text_input("MERT 模型目录", display_path(DEFAULT_MERT_MODEL_DIR))
             embeddings_dir = st.text_input("Embedding 输出目录", display_path(DEFAULT_MERT_EMBEDDINGS_DIR))
-            mert_index = st.text_input("MERT 索引 CSV", display_path(MERT_INDEX_FILE))
-            clusters_output = st.text_input("MERT 聚类 CSV", display_path(MERT_CLUSTERS_FILE))
+            mert_index = session_text_input("MERT 索引 CSV", default_mert_index_text(), key="mert-index")
+            clusters_output = session_text_input("MERT 聚类 CSV", default_mert_clusters_text(), key="mert-clusters-output")
 
             col_mert_1, col_mert_2, col_mert_3 = st.columns(3)
             with col_mert_1:
@@ -744,8 +1113,23 @@ def render_tag_tools() -> None:
             with col_mert_6:
                 mert_neighbors = st.number_input("近邻数", 1, 200, 5, 1)
                 no_progress = st.checkbox("关闭进度条输出", value=True, key="mert-no-progress")
+            warn_existing_outputs(
+                [
+                    ("输出标签 CSV", output_csv),
+                    ("输出标签 JSONL", jsonl_output),
+                    ("音频匹配 CSV", matches_output),
+                ]
+            )
 
-            command = base_tag_command(input_csv, lyrics_dir, audio_dir, output_csv, jsonl_output, matches_output)
+            command = base_tag_command(
+                input_csv,
+                lyrics_dir,
+                audio_dir,
+                output_csv,
+                jsonl_output,
+                matches_output,
+                audio_features_csv,
+            )
             command.extend(
                 [
                     "--extract-mert",

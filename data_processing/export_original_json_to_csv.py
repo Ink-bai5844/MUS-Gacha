@@ -2,7 +2,8 @@
 """
 Export per-song QCloudMusicApi JSON snapshots into one flat CSV table.
 
-The default input and output paths match the current project layout:
+When paths are omitted, the script derives dataset-specific paths from the
+available data/source/*_json directories:
 
     python export_original_json_to_csv.py
 
@@ -21,12 +22,37 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_INPUT_DIR = Path("data/source/ink_bai_liked_json")
-DEFAULT_OUTPUT = Path("data/source/ink_bai_liked_songs.csv")
 DEFAULT_LYRICS_DIR = Path("data/source/lyrics")
+SOURCE_DATA_DIR = Path("data/source")
 COPYRIGHT_UNAVAILABLE_MARKER = "\u6682\u65e0\u7248\u6743"
 URL_LEVELS = ("standard", "exhigh", "lossless", "hires")
 AUDIO_QUALITIES = ("l", "m", "h", "sq", "hr")
+
+
+def strip_dataset_suffix(name: str) -> str:
+    clean = name.strip().replace(" ", "_")
+    for suffix in ("_json", "_songs"):
+        if clean.endswith(suffix):
+            return clean[: -len(suffix)] or "songs"
+    return clean or "songs"
+
+
+def first_json_snapshot_dir() -> Path:
+    if SOURCE_DATA_DIR.exists():
+        json_dirs = sorted(path for path in SOURCE_DATA_DIR.glob("*_json") if path.is_dir())
+        if json_dirs:
+            return json_dirs[0]
+    return SOURCE_DATA_DIR / "songs_json"
+
+
+def apply_derived_defaults(args: argparse.Namespace) -> argparse.Namespace:
+    if args.input_dir is None:
+        args.input_dir = first_json_snapshot_dir()
+    if args.output is None:
+        dataset = strip_dataset_suffix(args.input_dir.name)
+        args.output = SOURCE_DATA_DIR / f"{dataset}_songs.csv"
+    return args
+
 
 BASE_COLUMNS = [
     "source_file",
@@ -576,14 +602,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=DEFAULT_INPUT_DIR,
-        help=f"Directory containing per-song JSON files. Default: {DEFAULT_INPUT_DIR}",
+        default=None,
+        help="Directory containing per-song JSON files. Defaults to the first data/source/*_json directory.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_OUTPUT,
-        help=f"CSV output path. Default: {DEFAULT_OUTPUT}",
+        default=None,
+        help="CSV output path. Derived from --input-dir when omitted.",
     )
     parser.add_argument(
         "--include-lyrics",
@@ -606,7 +632,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not write separate lyric txt files.",
     )
-    return parser.parse_args()
+    return apply_derived_defaults(parser.parse_args())
 
 
 def main() -> int:
