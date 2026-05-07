@@ -382,12 +382,12 @@ def render_overview() -> None:
 
 def render_collection_tools() -> None:
     with st.expander("网易云歌曲采集", expanded=True):
+        source_mode = st.selectbox(
+            "来源",
+            ["喜欢歌单名", "歌单 ID", "歌曲 ID 列表", "用户公开歌单"],
+            key="qcloud-source-mode",
+        )
         with st.form("process-qcloud-collect"):
-            source_mode = st.selectbox(
-                "来源",
-                ["喜欢歌单名", "歌单 ID", "歌曲 ID 列表", "用户公开歌单"],
-                key="qcloud-source-mode",
-            )
             song_ids_raw = ""
             my_playlist_name = ""
             playlist_id = 0
@@ -430,7 +430,7 @@ def render_collection_tools() -> None:
                 comment_limit = st.number_input("评论条数", min_value=0, max_value=200, value=20, step=1)
                 simi_limit = st.number_input("相似歌曲条数", min_value=0, max_value=200, value=20, step=1)
             with col_limits_3:
-                sleep_seconds = st.number_input("接口间隔秒数", min_value=0.0, max_value=60.0, value=0.15, step=0.05)
+                sleep_seconds = st.number_input("接口间隔秒数", min_value=0.0, max_value=60.0, value=1.0, step=0.05)
                 timeout = st.number_input("超时秒数", min_value=10, max_value=86400, value=3600, step=60)
 
             use_default_hosts = st.checkbox("使用默认网易云 Host 映射", value=True)
