@@ -10,6 +10,8 @@ _JANOME_TOKENIZER = None
 
 
 def safe_text(value):
+    if isinstance(value, (list, tuple, set)):
+        return " | ".join(safe_text(item) for item in value if safe_text(item))
     if pd.isna(value):
         return ""
     return str(value).strip()
@@ -153,6 +155,10 @@ def extract_comment_semantic_tags(row):
             safe_text(row.get("first_comment")),
         ]
     )
+    return extract_comment_semantic_tags_from_text(text)
+
+
+def extract_comment_semantic_tags_from_text(text):
     tags = []
     for tag, needles in COMMENT_RULES:
         if any(needle.lower() in text.lower() for needle in needles):

@@ -18,7 +18,7 @@
 - 从源 CSV、`data/source/lyrics` 和本地音乐目录融合生成可解释标签。
 - 支持歌名、歌手、专辑、歌词、评论的实时关键词检索。
 - 支持歌手、语种/场景、智能标签、音质、年份、热度、评论数等筛选。
-- 支持全局维度倍率、标签屏蔽、单标签权重、歌手权重、标题关键词权重、歌词关键词权重、评论语义权重。
+- 支持全局维度倍率、标签屏蔽、单标签权重、歌手权重、标题关键词权重、歌词关键词权重、歌词语义权重、评论语义权重。
 - 支持记录最近 N 次选中/打开行为，并基于历史偏好自动加权推荐。
 - 支持推荐总览、歌曲列表、歌曲详情、历史记录和数据处理独立页面。
 - 支持全局曲库画像、当前筛选画像和个人历史画像图表。
@@ -75,7 +75,7 @@ datacache/recommendation_history.json
 - 在推荐总览或歌曲列表中勾选 `选中`
 - 在歌曲详情页打开本地音频
 
-历史偏好会基于这些记录统计综合标签、语种、风格、情绪、主题、场景、音频标签、歌手、歌名关键词、歌词关键词和评论语义。越少见但又反复出现在历史里的特征，额外加分越高。
+历史偏好会基于这些记录统计综合标签、语种、风格、情绪、主题、场景、音频标签、歌手、歌名关键词、歌词关键词、歌词语义和评论语义。越少见但又反复出现在历史里的特征，额外加分越高。
 
 历史分会出现在 `评分拆解` 的 `历史偏好` 中。`历史偏好总分倍率` 为 `0` 时完全关闭历史偏好加权。历史记录页也支持刷新、清空、删除选中记录，以及关闭“选中歌曲算入历史记录”。
 
@@ -88,6 +88,7 @@ datacache/recommendation_history.json
 - 歌手权重：对指定歌手额外加权。
 - 歌名关键词权重：对歌名/专辑关键词加权。
 - 歌词关键词权重：对歌词分词得到的关键词加权。
+- 歌词语义权重：对歌词内容分析出的语义意象加权。
 - 评论语义权重：对评论内容分类出的语义标签加权。
 
 单项权重可以设置为负数，用于主动降权。
@@ -102,10 +103,9 @@ MUS-Gacha/
 ├─ ui_components.py                        # 页面样式和歌曲详情组件
 ├─ ui_data_processing.py                   # 数据处理可视化页面与脚本实时输出
 ├─ utils_core.py                           # 本地文件打开、音质/语种和展示字段辅助
-├─ utils_text.py                           # 文本清洗、分词、歌词/评论语义提取
+├─ utils_text.py                           # 文本清洗、分词和歌词关键词提取
 ├─ utils_charts.py                         # 全局/筛选/历史画像图表
 ├─ utils_history.py                        # 历史记录、历史设置和历史偏好加权
-├─ mert_emotion_demo.py                    # 单曲 MERT 情绪/embedding demo
 ├─ QCloudSongStore_README.md               # 网易云采集脚本详细说明
 ├─ requirements.txt                        # 基础依赖
 ├─ .streamlit/
@@ -115,7 +115,10 @@ MUS-Gacha/
 │  └─ retry_rate_limited_songs.py          # 重试包含“操作频繁”的 JSON 快照
 ├─ data_processing/
 │  ├─ export_original_json_to_csv.py       # 原始 JSON 导出 CSV/歌词
-│  └─ build_song_tags.py                   # 多源融合打标签、音频分析、MERT
+│  ├─ build_song_tags.py                   # 多源融合打标签、音频分析、MERT
+│  ├─ build_mert_emotion.py                # 单曲 MERT 情绪/embedding 分析
+│  ├─ build_lyric_semantics.py             # 使用本地 bge-m3 单独生成歌词语义
+│  └─ build_comment_semantics.py           # 使用本地 bge-m3 单独生成评论语义
 ├─ data/
 │  ├─ source/                              # 源数据：JSON、SQLite、可聚合歌曲 CSV、歌词
 │  │  ├─ my_playlist_json/                 # 每首歌的原始 JSON 快照示例
@@ -124,17 +127,24 @@ MUS-Gacha/
 │  │  ├─ my_playlist_songs.csv             # export_original_json_to_csv.py 输出示例
 │  │  └─ my_playlist.sqlite3               # 抓取缓存数据库示例
 │  ├─ tags/
-│  │  ├─ *_song_tags.csv                   # 标签输出，应用会批量读取
-│  │  └─ *_song_tags.jsonl                 # JSONL 版标签输出，应用会批量读取
+│  │  ├─ *_song_tags.csv                   # 最终标签总表，应用只从这里读取生成结果
+│  │  └─ *_song_tags.jsonl                 # JSONL 版标签输出，供查看/归档
+│  ├─ matches/
+│  │  └─ *_song_matches.csv                # 本地音频匹配功能产物
 │  └─ features/
+│     ├─ lyric/
+│     │  ├─ *_lyric_semantics.csv          # 歌词语义功能产物
+│     │  └─ *_lyric_semantics.jsonl
+│     ├─ comment/
+│     │  ├─ *_comment_semantics.csv        # 评论语义功能产物
+│     │  └─ *_comment_semantics.jsonl
 │     ├─ audio/
-│     │  ├─ *_song_matches.csv             # 本地音频匹配表，应用会批量读取
-│     │  ├─ *_song_features.csv            # 普通音频特征，应用会批量读取
+│     │  ├─ *_song_features.csv            # 普通音频特征功能产物
 │     │  └─ *_song_features.parquet
 │     └─ mert/
 │        ├─ embeddings/                    # 每首歌一个 .npy embedding
-│        ├─ *_mert_index.csv               # MERT 情绪与 embedding 索引，应用会批量读取
-│        └─ *_mert_clusters.csv            # 聚类与近邻歌曲，应用会批量读取
+│        ├─ *_mert_index.csv               # MERT 情绪与 embedding 索引功能产物
+│        └─ *_mert_clusters.csv            # 聚类与近邻歌曲功能产物
 ├─ datacache/                              # Streamlit 预处理缓存与历史记录
 ├─ models/                                 # 本地模型目录，含 MERT 和 HDemucs
 └─ QCloudMusicApi/                         # QCloudMusicApi 源码/编译产物
@@ -148,7 +158,7 @@ MUS-Gacha/
 2. 用 `data_processing/export_original_json_to_csv.py` 把 JSON 快照导出为歌曲 CSV，并抽取歌词到 `data/source/lyrics/{song_id}.txt`。
 3. 把一个或多个歌曲 CSV 放到 `data/source/` 下。
 4. 启动 `app.py` 后，应用扫描 `data/source/*.csv`，按 `song_id` 去重汇总为曲库。
-5. 应用批量合并 `data/tags/*.csv`、`data/tags/*.jsonl`、`data/features/audio/*song_matches*.csv`、`data/features/audio/*song_features*.csv`、MERT 输出和本地歌词，生成预处理缓存。
+5. 应用只批量合并 `data/tags/*song_tags.csv` 和本地歌词，生成预处理缓存。匹配、音频特征、歌词语义、评论语义和 MERT 功能产物需要先回写到对应的 `*_song_tags.csv`。
 6. 页面中按照动态推荐分、关键词检索、侧边栏筛选条件进行展示。
 7. 用户选中歌曲或打开本地音频时，应用写入历史记录，用于历史偏好加权和历史画像图表。
 8. 新增本地音乐、重跑标签、重跑音频特征或 MERT 后，刷新 Streamlit 页面即可重新读取结果。
@@ -342,6 +352,27 @@ data/source/lyrics/{song_id}.txt
 
 这些关键词不会写回 CSV，而是在 Streamlit 加载数据时动态生成。
 
+### 歌词语义
+
+歌词语义不会在应用启动或主预处理时运行模型。需要在 `数据处理 -> 标签与音频 -> 歌词语义分析` 中单独执行，或使用命令行脚本：
+
+```powershell
+python data_processing\build_lyric_semantics.py `
+  --input data\source\my_playlist_songs.csv `
+  --lyrics-dir data\source\lyrics `
+  --model-dir models\bge-m3
+```
+
+默认输出会按输入文件名推导，例如：
+
+```text
+data\features\lyric\my_playlist_lyric_semantics.csv
+data\features\lyric\my_playlist_lyric_semantics.jsonl
+data\tags\my_playlist_song_tags.csv
+```
+
+其中 `data\features\lyric` 保存歌词语义功能产物，`data\tags\*_song_tags.csv` 保存应用最终读取的字段。
+
 ### 评论语义
 
 推荐分里的“评论语义”不直接使用评论数量，而是分析评论内容。应用读取：
@@ -351,7 +382,15 @@ first_hot_comment
 first_comment
 ```
 
-并按关键词规则生成：
+评论语义不会在应用启动或主预处理时运行模型。需要在 `数据处理 -> 标签与音频 -> 评论语义分析` 中单独执行，或使用命令行脚本：
+
+```powershell
+python data_processing\build_comment_semantics.py `
+  --input data\source\my_playlist_songs.csv `
+  --model-dir models\bge-m3
+```
+
+脚本会读取本地 `bge-m3`，根据评论文本和语义标签描述的相似度生成：
 
 ```text
 回忆共鸣
@@ -364,6 +403,16 @@ first_comment
 亲情陪伴
 影视回忆
 ```
+
+默认输出会按输入文件名推导，例如：
+
+```text
+data\features\comment\my_playlist_comment_semantics.csv
+data\features\comment\my_playlist_comment_semantics.jsonl
+data\tags\my_playlist_song_tags.csv
+```
+
+其中 `data\features\comment` 保存评论语义功能产物，`data\tags\*_song_tags.csv` 保存应用最终读取的字段。如果模型置信度不足，默认会使用关键词规则回退；可以加 `--no-keyword-fallback` 关闭。输出文件如果已经存在，会按 `song_id` 追加合并，不覆盖旧数据。
 
 这些标签参与“评论语义倍率”和“评论语义权重配置”。
 
@@ -389,7 +438,7 @@ first_comment
 
 推荐优先使用应用内的 `数据处理` 页面操作。该页面已经把常用流程做成可视化表单，并提供脚本实时输出。
 
-在标签、音频特征和 MERT 表单中，`歌曲主表` 使用 `data/source/*.csv` 下拉选择。选择某个 CSV 后点击右侧 `确认`，页面会按文件名自动填充对应的标签、JSONL、音频匹配、音频特征和 MERT 输出路径。
+在标签、歌词语义、评论语义、音频特征和 MERT 表单中，`歌曲主表` 使用 `data/source/*.csv` 下拉选择。选择某个 CSV 后点击右侧 `确认`，页面会按文件名自动填充对应的标签总表、JSONL、音频匹配、歌词语义、评论语义、音频特征和 MERT 输出路径。
 
 ### 网易云歌曲采集
 
@@ -465,14 +514,18 @@ python data_processing\export_original_json_to_csv.py `
 
 ### 生成基础标签和本地音频匹配
 
-`build_song_tags.py` 一次处理一个源 CSV。Streamlit 曲库会读取 `data/source/*.csv` 的汇总结果；标签、JSONL、本地音频匹配、音频特征和 MERT 结果也会按目录批量读取。新增多个源 CSV 后，分别对每个 CSV 跑一次标签/音频/MERT 流程即可，不需要把结果手动合并成单个文件。
+`build_song_tags.py` 一次处理一个源 CSV。Streamlit 曲库会读取 `data/source/*.csv` 的汇总结果，并只从 `data/tags/*song_tags.csv` 读取标签、匹配、音频特征、歌词语义、评论语义和 MERT 字段。`data/matches`、`data/features/audio`、`data/features/lyric`、`data/features/comment`、`data/features/mert` 只保留各自功能产物；运行对应脚本时会把最终字段回写到 `*_song_tags.csv`。
 
-如果省略输出路径，脚本会按 `--input` 的文件名推导数据集名前缀。例如 `data\source\my_playlist_songs.csv` 会默认写到：
+如果省略输出路径，各数据处理脚本会按 `--input` 的文件名推导数据集名前缀。例如 `data\source\my_playlist_songs.csv` 对应的默认结果路径是：
 
 ```text
 data\tags\my_playlist_song_tags.csv
 data\tags\my_playlist_song_tags.jsonl
-data\features\audio\my_playlist_song_matches.csv
+data\matches\my_playlist_song_matches.csv
+data\features\lyric\my_playlist_lyric_semantics.csv
+data\features\lyric\my_playlist_lyric_semantics.jsonl
+data\features\comment\my_playlist_comment_semantics.csv
+data\features\comment\my_playlist_comment_semantics.jsonl
 data\features\audio\my_playlist_song_features.csv
 data\features\audio\my_playlist_song_features.parquet
 data\features\mert\my_playlist_mert_index.csv
@@ -617,12 +670,12 @@ data\features\mert\my_playlist_mert_clusters.csv
 
 注意：MERT 是自监督音乐表征模型。这里的 `mert_emotion_tags` 来自启发式情绪代理，不是经过人工标注数据训练出的可靠情绪分类器。
 
-### 单曲 MERT demo
+### 单曲 MERT 情绪分析
 
-`mert_emotion_demo.py` 可以单独分析一首音频：
+`data_processing\build_mert_emotion.py` 可以单独分析一首音频：
 
 ```powershell
-python .\mert_emotion_demo.py `
+python data_processing\build_mert_emotion.py `
   --model-dir .\models\MERT-v1-330M `
   --audio "H:\音乐\demo.flac" `
   --max-seconds 30 `
@@ -632,7 +685,7 @@ python .\mert_emotion_demo.py `
 保存 JSON：
 
 ```powershell
-python .\mert_emotion_demo.py `
+python data_processing\build_mert_emotion.py `
   --model-dir .\models\MERT-v1-330M `
   --audio "H:\音乐\demo.flac" `
   --max-seconds 30 `
@@ -648,7 +701,7 @@ python .\mert_emotion_demo.py `
 - 源 CSV 的 `song_id` 列
 - `data/source/lyrics/{song_id}.txt`
 - `data/tags/*_song_tags.csv`
-- `data/features/audio/*_song_matches.csv`
+- `data/matches/*_song_matches.csv`
 - `data/features/mert/embeddings/{song_id}.npy`
 - `data/features/mert/*_mert_index.csv`
 - `data/features/mert/*_mert_clusters.csv`
@@ -679,7 +732,7 @@ python .\mert_emotion_demo.py `
 匹配结果在：
 
 ```text
-data\features\audio\*_song_matches.csv
+data\matches\*_song_matches.csv
 ```
 
 ## 缓存说明
@@ -696,22 +749,28 @@ data\features\audio\*_song_matches.csv
   源歌曲 CSV。任意文件变化都会触发下次启动时重建预处理缓存。
 - `data/source/lyrics/*.txt`
   本地歌词。歌词增删改也会触发预处理缓存重建。
-- `data/tags/*.csv` 和 `data/tags/*.jsonl`
-  智能标签输出。任意文件变化后会触发预处理缓存重建。
-- `data/features/audio/*song_matches*.csv`
-  本地音频匹配结果。标签脚本会读取/复用它。
+- `data/tags/*song_tags.csv`
+  最终标签总表。应用只读取这些 CSV；任意文件变化后会触发预处理缓存重建。
+- `data/tags/*song_tags.jsonl`
+  JSONL 版标签输出，供查看或归档，不参与应用读取和预处理哈希。
+- `data/matches/*song_matches*.csv`
+  本地音频匹配功能产物。标签脚本会读取/复用它，并把最终字段回写到 `*_song_tags.csv`。
 - `data/features/audio/*song_features*.csv`
-  普通音频特征输出。
+  普通音频特征功能产物。应用不直接读取，最终字段以 `*_song_tags.csv` 为准。
+- `data/features/lyric/*lyric_semantics*.csv`
+  歌词语义功能产物。应用不直接读取，最终字段以 `*_song_tags.csv` 为准。
+- `data/features/comment/*comment_semantics*.csv`
+  评论语义功能产物。应用不直接读取，最终字段以 `*_song_tags.csv` 为准。
 - `data/features/mert/embeddings/*.npy`
   每首歌的 MERT embedding。
 - `data/features/mert/*mert_index*.csv`
-  MERT embedding、启发式情绪、valence/arousal 索引。
+  MERT embedding、启发式情绪、valence/arousal 索引功能产物。
 - `data/features/mert/*mert_clusters*.csv`
-  MERT 聚类和近邻歌曲。
+  MERT 聚类和近邻歌曲功能产物。
 - `.cache/huggingface`
   HuggingFace 动态模块和模型相关缓存。
 
-当任意源 CSV、标签/JSONL、音频匹配、音频特征、MERT 输出或歌词文件发生变化时，`datacache/data.hash` 会失效，下一次启动会自动重建预处理缓存。若缓存结构升级导致异常，可删除 `datacache/` 后重新运行：
+当任意源 CSV、`data/tags/*song_tags.csv` 或歌词文件发生变化时，`datacache/data.hash` 会失效，下一次启动会自动重建预处理缓存。若缓存结构升级导致异常，可删除 `datacache/` 后重新运行：
 
 ```powershell
 streamlit run app.py
@@ -756,7 +815,8 @@ python data_get\qcloud_song_store.py --help
 python data_get\retry_rate_limited_songs.py --help
 python data_processing\export_original_json_to_csv.py --help
 python data_processing\build_song_tags.py --help
-python mert_emotion_demo.py --help
+python data_processing\build_lyric_semantics.py --help
+python data_processing\build_mert_emotion.py --help
 ```
 
 ## ⚠️ 注意事项
@@ -766,7 +826,7 @@ python mert_emotion_demo.py --help
 - `data/`、`datacache/`、`models/`、`.cache/` 默认不进 Git。
 - `build_song_tags.py` 一次处理一个 CSV；省略 `--input` 时会选择第一个 `data/source/*.csv`，输出文件按输入名自动推导。
 - 如果 `data/source/*.csv` 一个都没有，标签/音频/MERT 没有可处理的歌曲主表；请先从 JSON 快照导出 CSV，或手动放入带 `song_id` 列的源 CSV。
-- Streamlit 曲库会自动读取 `data/source/*.csv` 并去重；标签、JSONL、音频匹配、音频特征和 MERT CSV 结果也会批量读取。
+- Streamlit 曲库会自动读取 `data/source/*.csv` 并去重；生成结果只读取 `data/tags/*song_tags.csv`。JSONL、音频匹配、音频特征、歌词语义、评论语义和 MERT CSV 都是功能产物，需要先回写到标签总表。
 - QCloudMusicApi 抓取接口可能遇到限流；可以用 `retry_rate_limited_songs.py` 或数据处理页重试。
 - `torchaudio` 可能无法识别某些 `.m4a`。这种文件仍可能被匹配到本地路径，但音频特征和 MERT embedding 会为空。
 - MERT 情绪标签是启发式标签，适合辅助检索和初筛；可靠情绪分类需要人工标注数据和分类头训练。

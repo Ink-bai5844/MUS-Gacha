@@ -29,6 +29,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 SOURCE_DATA_DIR = DATA_DIR / "source"
 TAG_DATA_DIR = DATA_DIR / "tags"
+MATCH_DATA_DIR = DATA_DIR / "matches"
 AUDIO_FEATURE_DATA_DIR = DATA_DIR / "features" / "audio"
 MERT_DATA_DIR = DATA_DIR / "features" / "mert"
 DEFAULT_LYRICS_DIR = SOURCE_DATA_DIR / "lyrics"
@@ -167,7 +168,7 @@ def apply_derived_output_defaults(args: argparse.Namespace) -> argparse.Namespac
     if args.jsonl_output is None:
         args.jsonl_output = TAG_DATA_DIR / f"{dataset}_song_tags.jsonl"
     if args.matches_output is None:
-        args.matches_output = AUDIO_FEATURE_DATA_DIR / f"{dataset}_song_matches.csv"
+        args.matches_output = MATCH_DATA_DIR / f"{dataset}_song_matches.csv"
     if args.audio_features_csv is None:
         args.audio_features_csv = AUDIO_FEATURE_DATA_DIR / f"{dataset}_song_features.csv"
     if args.audio_features_parquet is None:
@@ -1169,10 +1170,13 @@ def load_mert_audio(mert: Any, path: Path, target_sr: int, max_seconds: float | 
 def prepare_mert_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any, Any]:
     if str(BASE_DIR) not in sys.path:
         sys.path.insert(0, str(BASE_DIR))
+    script_dir = Path(__file__).resolve().parent
+    if str(script_dir) not in sys.path:
+        sys.path.insert(0, str(script_dir))
     hf_cache = BASE_DIR / ".cache" / "huggingface"
     os.environ.setdefault("HF_HOME", str(hf_cache))
     os.environ.setdefault("TRANSFORMERS_CACHE", str(hf_cache / "transformers"))
-    import mert_emotion_demo as mert
+    import build_mert_emotion as mert
 
     mert.load_runtime_dependencies()
     device = mert.choose_device(args.mert_device)

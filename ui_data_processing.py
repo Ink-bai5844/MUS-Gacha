@@ -15,7 +15,10 @@ import streamlit as st
 from config import (
     AUDIO_FEATURE_DATA_DIR,
     CACHE_DIR,
+    COMMENT_SEMANTIC_DATA_DIR,
     LYRICS_DIR,
+    LYRIC_SEMANTIC_DATA_DIR,
+    MATCH_DATA_DIR,
     MERT_DATA_DIR,
     PREPROCESSED_DATA_FILE,
     PREPROCESSED_HASH_FILE,
@@ -36,6 +39,7 @@ DEFAULT_AUDIO_DIR = Path(r"H:\音乐")
 DEFAULT_MERT_MODEL_DIR = PROJECT_ROOT / "models" / "MERT-v1-330M"
 DEFAULT_MERT_EMBEDDINGS_DIR = MERT_DATA_DIR / "embeddings"
 DEFAULT_HDEMUCS_CHECKPOINT = PROJECT_ROOT / "models" / "hdemucs_high_trained.pt"
+DEFAULT_COMMENT_MODEL_DIR = PROJECT_ROOT / "models" / "bge-m3"
 
 DEFAULT_RESOLVE_HOSTS = [
     "interface.music.163.com=117.135.207.67",
@@ -72,8 +76,24 @@ def tag_jsonl_default_for_dataset(dataset: str) -> str:
     return display_path(TAG_DATA_DIR / f"{dataset}_song_tags.jsonl")
 
 
+def comment_semantics_csv_default_for_dataset(dataset: str) -> str:
+    return display_path(COMMENT_SEMANTIC_DATA_DIR / f"{dataset}_comment_semantics.csv")
+
+
+def comment_semantics_jsonl_default_for_dataset(dataset: str) -> str:
+    return display_path(COMMENT_SEMANTIC_DATA_DIR / f"{dataset}_comment_semantics.jsonl")
+
+
+def lyric_semantics_csv_default_for_dataset(dataset: str) -> str:
+    return display_path(LYRIC_SEMANTIC_DATA_DIR / f"{dataset}_lyric_semantics.csv")
+
+
+def lyric_semantics_jsonl_default_for_dataset(dataset: str) -> str:
+    return display_path(LYRIC_SEMANTIC_DATA_DIR / f"{dataset}_lyric_semantics.jsonl")
+
+
 def audio_matches_default_for_dataset(dataset: str) -> str:
-    return display_path(AUDIO_FEATURE_DATA_DIR / f"{dataset}_song_matches.csv")
+    return display_path(MATCH_DATA_DIR / f"{dataset}_song_matches.csv")
 
 
 def audio_features_csv_default_for_dataset(dataset: str) -> str:
@@ -170,6 +190,22 @@ def default_tag_jsonl_text() -> str:
     return tag_jsonl_default_for_dataset(default_dataset_name())
 
 
+def default_comment_semantics_csv_text() -> str:
+    return comment_semantics_csv_default_for_dataset(default_dataset_name())
+
+
+def default_comment_semantics_jsonl_text() -> str:
+    return comment_semantics_jsonl_default_for_dataset(default_dataset_name())
+
+
+def default_lyric_semantics_csv_text() -> str:
+    return lyric_semantics_csv_default_for_dataset(default_dataset_name())
+
+
+def default_lyric_semantics_jsonl_text() -> str:
+    return lyric_semantics_jsonl_default_for_dataset(default_dataset_name())
+
+
 def default_audio_matches_text() -> str:
     return audio_matches_default_for_dataset(default_dataset_name())
 
@@ -193,7 +229,7 @@ def default_mert_clusters_text() -> str:
 def tag_csv_paths() -> list[Path]:
     if not TAG_DATA_DIR.exists():
         return []
-    return sorted(path for path in TAG_DATA_DIR.glob("*.csv") if path.is_file())
+    return sorted(path for path in TAG_DATA_DIR.glob("*song_tags.csv") if path.is_file())
 
 
 def tag_jsonl_paths() -> list[Path]:
@@ -202,10 +238,34 @@ def tag_jsonl_paths() -> list[Path]:
     return sorted(path for path in TAG_DATA_DIR.glob("*.jsonl") if path.is_file())
 
 
-def audio_match_csv_paths() -> list[Path]:
-    if not AUDIO_FEATURE_DATA_DIR.exists():
+def comment_semantic_csv_paths() -> list[Path]:
+    if not COMMENT_SEMANTIC_DATA_DIR.exists():
         return []
-    return sorted(path for path in AUDIO_FEATURE_DATA_DIR.glob("*audio_song_matches*.csv") if path.is_file())
+    return sorted(path for path in COMMENT_SEMANTIC_DATA_DIR.glob("*comment_semantics*.csv") if path.is_file())
+
+
+def comment_semantic_jsonl_paths() -> list[Path]:
+    if not COMMENT_SEMANTIC_DATA_DIR.exists():
+        return []
+    return sorted(path for path in COMMENT_SEMANTIC_DATA_DIR.glob("*comment_semantics*.jsonl") if path.is_file())
+
+
+def lyric_semantic_csv_paths() -> list[Path]:
+    if not LYRIC_SEMANTIC_DATA_DIR.exists():
+        return []
+    return sorted(path for path in LYRIC_SEMANTIC_DATA_DIR.glob("*lyric_semantics*.csv") if path.is_file())
+
+
+def lyric_semantic_jsonl_paths() -> list[Path]:
+    if not LYRIC_SEMANTIC_DATA_DIR.exists():
+        return []
+    return sorted(path for path in LYRIC_SEMANTIC_DATA_DIR.glob("*lyric_semantics*.jsonl") if path.is_file())
+
+
+def audio_match_csv_paths() -> list[Path]:
+    if not MATCH_DATA_DIR.exists():
+        return []
+    return sorted(path for path in MATCH_DATA_DIR.glob("*song_matches*.csv") if path.is_file())
 
 
 def audio_feature_csv_paths() -> list[Path]:
@@ -272,7 +332,19 @@ def get_optional_source_csv_rows() -> str:
 def get_optional_tag_result_rows() -> str:
     if not stats_loaded():
         return "未统计"
-    return str(summed_csv_rows(tag_csv_paths()) + summed_jsonl_rows(tag_jsonl_paths()))
+    return str(summed_csv_rows(tag_csv_paths()))
+
+
+def get_optional_comment_result_rows() -> str:
+    if not stats_loaded():
+        return "未统计"
+    return str(summed_csv_rows(comment_semantic_csv_paths()) + summed_jsonl_rows(comment_semantic_jsonl_paths()))
+
+
+def get_optional_lyric_semantic_result_rows() -> str:
+    if not stats_loaded():
+        return "未统计"
+    return str(summed_csv_rows(lyric_semantic_csv_paths()) + summed_jsonl_rows(lyric_semantic_jsonl_paths()))
 
 
 def get_optional_audio_result_rows() -> str:
@@ -492,6 +564,20 @@ def confirm_song_table_defaults(
         st.session_state[mert_clusters_key] = mert_clusters_default_for_dataset(dataset)
 
 
+def confirm_comment_semantic_defaults(input_key: str, output_key: str, jsonl_key: str, tags_output_key: str) -> None:
+    dataset = dataset_name_from_path(st.session_state.get(input_key, default_source_csv_text()))
+    st.session_state[output_key] = comment_semantics_csv_default_for_dataset(dataset)
+    st.session_state[jsonl_key] = comment_semantics_jsonl_default_for_dataset(dataset)
+    st.session_state[tags_output_key] = tag_csv_default_for_dataset(dataset)
+
+
+def confirm_lyric_semantic_defaults(input_key: str, output_key: str, jsonl_key: str, tags_output_key: str) -> None:
+    dataset = dataset_name_from_path(st.session_state.get(input_key, default_source_csv_text()))
+    st.session_state[output_key] = lyric_semantics_csv_default_for_dataset(dataset)
+    st.session_state[jsonl_key] = lyric_semantics_jsonl_default_for_dataset(dataset)
+    st.session_state[tags_output_key] = tag_csv_default_for_dataset(dataset)
+
+
 def text_input_with_confirm(
     label: str,
     default_value: str,
@@ -519,7 +605,7 @@ def source_csv_options(default_value: str | Path) -> list[str]:
     default_text = str(default_value)
     current_values = [
         str(st.session_state.get(key, "")).strip()
-        for key in ("basic-input", "audio-input", "mert-input")
+        for key in ("basic-input", "lyric-input", "comment-input", "audio-input", "mert-input")
     ]
     for item in [default_text, *current_values]:
         if item and item not in options:
@@ -591,13 +677,15 @@ def render_overview() -> None:
     with col_hint:
         st.caption("大目录和 CSV 行数默认不自动扫描，点刷新后再统计。")
 
-    status_cols = st.columns(6)
+    status_cols = st.columns(8)
     status_cols[0].metric("JSON 快照", get_optional_count(DEFAULT_JSON_DIR, "*.json"))
     status_cols[1].metric("歌词 TXT", get_optional_count(LYRICS_DIR, "*.txt"))
     status_cols[2].metric("源 CSV 总行", get_optional_source_csv_rows())
     status_cols[3].metric("标签结果行", get_optional_tag_result_rows())
-    status_cols[4].metric("音频结果行", get_optional_audio_result_rows())
-    status_cols[5].metric("MERT 向量", get_optional_count(DEFAULT_MERT_EMBEDDINGS_DIR, "*.npy"))
+    status_cols[4].metric("歌词语义行", get_optional_lyric_semantic_result_rows())
+    status_cols[5].metric("评论语义行", get_optional_comment_result_rows())
+    status_cols[6].metric("音频结果行", get_optional_audio_result_rows())
+    status_cols[7].metric("MERT 向量", get_optional_count(DEFAULT_MERT_EMBEDDINGS_DIR, "*.npy"))
 
     cache_rows = [
         ("源 CSV 目录", SOURCE_DATA_DIR),
@@ -607,8 +695,15 @@ def render_overview() -> None:
         ("标签目录", TAG_DATA_DIR),
         ("推导标签 CSV", default_tag_csv_text()),
         ("推导标签 JSONL", default_tag_jsonl_text()),
-        ("音频特征目录", AUDIO_FEATURE_DATA_DIR),
+        ("歌词语义目录", LYRIC_SEMANTIC_DATA_DIR),
+        ("推导歌词语义 CSV", default_lyric_semantics_csv_text()),
+        ("推导歌词语义 JSONL", default_lyric_semantics_jsonl_text()),
+        ("评论语义目录", COMMENT_SEMANTIC_DATA_DIR),
+        ("推导评论语义 CSV", default_comment_semantics_csv_text()),
+        ("推导评论语义 JSONL", default_comment_semantics_jsonl_text()),
+        ("匹配目录", MATCH_DATA_DIR),
         ("推导本地音频匹配", default_audio_matches_text()),
+        ("音频特征目录", AUDIO_FEATURE_DATA_DIR),
         ("推导音频特征 CSV", default_audio_features_csv_text()),
         ("推导 MERT 索引", default_mert_index_text()),
         ("推导 MERT 聚类", default_mert_clusters_text()),
@@ -843,6 +938,10 @@ def render_csv_tools() -> None:
             preview_options[f"源 CSV / {path.name}"] = path
         for path in tag_csv_paths():
             preview_options[f"标签 CSV / {path.name}"] = path
+        for path in lyric_semantic_csv_paths():
+            preview_options[f"歌词语义 / {path.name}"] = path
+        for path in comment_semantic_csv_paths():
+            preview_options[f"评论语义 / {path.name}"] = path
         for path in audio_match_csv_paths():
             preview_options[f"音频匹配 / {path.name}"] = path
         for path in audio_feature_csv_paths():
@@ -889,6 +988,110 @@ def base_tag_command(
         matches_output,
     ]
     add_arg(command, "--audio-features-csv", audio_features_csv)
+    return command
+
+
+def comment_semantics_command(
+    input_csv: str,
+    output_csv: str,
+    jsonl_output: str,
+    tags_output: str,
+    model_dir: str,
+    device: str,
+    batch_size: int,
+    max_length: int,
+    threshold: float,
+    margin: float,
+    max_tags: int,
+    limit: int,
+    keyword_fallback: bool,
+    no_progress: bool,
+) -> list[str]:
+    command = [
+        PYTHON,
+        str(PROJECT_ROOT / "data_processing" / "build_comment_semantics.py"),
+        "--input",
+        input_csv,
+        "--output",
+        output_csv,
+        "--jsonl-output",
+        jsonl_output,
+        "--tags-output",
+        tags_output,
+        "--model-dir",
+        model_dir,
+        "--device",
+        device,
+        "--batch-size",
+        str(int(batch_size)),
+        "--max-length",
+        str(int(max_length)),
+        "--threshold",
+        str(float(threshold)),
+        "--margin",
+        str(float(margin)),
+        "--max-tags",
+        str(int(max_tags)),
+    ]
+    if limit > 0:
+        command.extend(["--limit", str(int(limit))])
+    add_flag(command, "--no-keyword-fallback", not keyword_fallback)
+    add_flag(command, "--no-progress", no_progress)
+    return command
+
+
+def lyric_semantics_command(
+    input_csv: str,
+    lyrics_dir: str,
+    output_csv: str,
+    jsonl_output: str,
+    tags_output: str,
+    model_dir: str,
+    device: str,
+    batch_size: int,
+    max_length: int,
+    max_chars: int,
+    threshold: float,
+    margin: float,
+    max_tags: int,
+    limit: int,
+    keyword_fallback: bool,
+    no_progress: bool,
+) -> list[str]:
+    command = [
+        PYTHON,
+        str(PROJECT_ROOT / "data_processing" / "build_lyric_semantics.py"),
+        "--input",
+        input_csv,
+        "--lyrics-dir",
+        lyrics_dir,
+        "--output",
+        output_csv,
+        "--jsonl-output",
+        jsonl_output,
+        "--tags-output",
+        tags_output,
+        "--model-dir",
+        model_dir,
+        "--device",
+        device,
+        "--batch-size",
+        str(int(batch_size)),
+        "--max-length",
+        str(int(max_length)),
+        "--max-chars",
+        str(int(max_chars)),
+        "--threshold",
+        str(float(threshold)),
+        "--margin",
+        str(float(margin)),
+        "--max-tags",
+        str(int(max_tags)),
+    ]
+    if limit > 0:
+        command.extend(["--limit", str(int(limit))])
+    add_flag(command, "--no-keyword-fallback", not keyword_fallback)
+    add_flag(command, "--no-progress", no_progress)
     return command
 
 
@@ -963,6 +1166,166 @@ def render_tag_tools() -> None:
             submit_subprocess("生成基础标签", "basic-tags", command, int(timeout))
 
         render_result("basic-tags", "脚本输出会显示在这里。")
+
+    with st.expander("歌词语义分析", expanded=False):
+        with st.form("process-lyric-semantics"):
+            input_csv = source_csv_select_with_confirm(
+                "歌曲主表",
+                default_source_csv_text(),
+                "lyric-input",
+                confirm_lyric_semantic_defaults,
+                (
+                    "lyric-input",
+                    "lyric-output",
+                    "lyric-jsonl",
+                    "lyric-tags-output",
+                ),
+            )
+            lyrics_dir = st.text_input("歌词目录", display_path(LYRICS_DIR), key="lyric-semantics-lyrics")
+            output_csv = session_text_input(
+                "输出歌词语义 CSV",
+                default_lyric_semantics_csv_text(),
+                key="lyric-output",
+            )
+            jsonl_output = session_text_input(
+                "输出歌词语义 JSONL",
+                default_lyric_semantics_jsonl_text(),
+                key="lyric-jsonl",
+            )
+            tags_output = session_text_input(
+                "回写标签总表 CSV",
+                default_tag_csv_text(),
+                key="lyric-tags-output",
+            )
+            model_dir = st.text_input("bge-m3 模型目录", display_path(DEFAULT_COMMENT_MODEL_DIR), key="lyric-model")
+
+            col_lyric_1, col_lyric_2, col_lyric_3 = st.columns(3)
+            with col_lyric_1:
+                device = st.selectbox("设备", ["auto", "cpu", "cuda", "cuda:0"], index=0, key="lyric-device")
+                batch_size = st.number_input("批大小", 1, 128, 16, 1, key="lyric-batch")
+            with col_lyric_2:
+                threshold = st.number_input("相似度阈值", 0.0, 1.0, 0.48, 0.01, key="lyric-threshold")
+                margin = st.number_input("Top 差距", 0.0, 1.0, 0.04, 0.01, key="lyric-margin")
+            with col_lyric_3:
+                max_tags = st.number_input("最多标签数", 1, 10, 3, 1, key="lyric-max-tags")
+                timeout = st.number_input("超时秒数", 10, 86400, 7200, 60, key="lyric-timeout")
+
+            col_lyric_4, col_lyric_5, col_lyric_6 = st.columns(3)
+            with col_lyric_4:
+                max_length = st.number_input("最大 Token 长度", 64, 2048, 512, 64, key="lyric-max-length")
+            with col_lyric_5:
+                max_chars = st.number_input("最大歌词字符数（0 为不裁剪）", 0, 20000, 2400, 100, key="lyric-max-chars")
+                limit = st.number_input("处理条数上限（0 为全部）", 0, 1000000, 0, 10, key="lyric-limit")
+            with col_lyric_6:
+                keyword_fallback = st.checkbox("低置信度时使用关键词回退", value=True, key="lyric-fallback")
+                no_progress = st.checkbox("关闭进度条输出", value=True, key="lyric-no-progress")
+
+            warn_existing_outputs(
+                [
+                    ("输出歌词语义 CSV", output_csv),
+                    ("输出歌词语义 JSONL", jsonl_output),
+                    ("回写标签总表 CSV", tags_output),
+                ]
+            )
+            command = lyric_semantics_command(
+                input_csv,
+                lyrics_dir,
+                output_csv,
+                jsonl_output,
+                tags_output,
+                model_dir,
+                device,
+                int(batch_size),
+                int(max_length),
+                int(max_chars),
+                float(threshold),
+                float(margin),
+                int(max_tags),
+                int(limit),
+                keyword_fallback,
+                no_progress,
+            )
+            submit_subprocess("生成歌词语义", "lyric-semantics", command, int(timeout))
+
+        render_result("lyric-semantics", "脚本输出会显示在这里。")
+
+    with st.expander("评论语义分析", expanded=False):
+        with st.form("process-comment-semantics"):
+            input_csv = source_csv_select_with_confirm(
+                "歌曲主表",
+                default_source_csv_text(),
+                "comment-input",
+                confirm_comment_semantic_defaults,
+                (
+                    "comment-input",
+                    "comment-output",
+                    "comment-jsonl",
+                    "comment-tags-output",
+                ),
+            )
+            output_csv = session_text_input(
+                "输出评论语义 CSV",
+                default_comment_semantics_csv_text(),
+                key="comment-output",
+            )
+            jsonl_output = session_text_input(
+                "输出评论语义 JSONL",
+                default_comment_semantics_jsonl_text(),
+                key="comment-jsonl",
+            )
+            tags_output = session_text_input(
+                "回写标签总表 CSV",
+                default_tag_csv_text(),
+                key="comment-tags-output",
+            )
+            model_dir = st.text_input("bge-m3 模型目录", display_path(DEFAULT_COMMENT_MODEL_DIR), key="comment-model")
+
+            col_comment_1, col_comment_2, col_comment_3 = st.columns(3)
+            with col_comment_1:
+                device = st.selectbox("设备", ["auto", "cpu", "cuda", "cuda:0"], index=0, key="comment-device")
+                batch_size = st.number_input("批大小", 1, 128, 16, 1, key="comment-batch")
+            with col_comment_2:
+                threshold = st.number_input("相似度阈值", 0.0, 1.0, 0.48, 0.01, key="comment-threshold")
+                margin = st.number_input("Top 差距", 0.0, 1.0, 0.03, 0.01, key="comment-margin")
+            with col_comment_3:
+                max_tags = st.number_input("最多标签数", 1, 10, 3, 1, key="comment-max-tags")
+                timeout = st.number_input("超时秒数", 10, 86400, 7200, 60, key="comment-timeout")
+
+            col_comment_4, col_comment_5, col_comment_6 = st.columns(3)
+            with col_comment_4:
+                max_length = st.number_input("最大文本长度", 32, 1024, 256, 32, key="comment-max-length")
+            with col_comment_5:
+                limit = st.number_input("处理条数上限（0 为全部）", 0, 1000000, 0, 10, key="comment-limit")
+            with col_comment_6:
+                keyword_fallback = st.checkbox("低置信度时使用关键词回退", value=True, key="comment-fallback")
+                no_progress = st.checkbox("关闭进度条输出", value=True, key="comment-no-progress")
+
+            warn_existing_outputs(
+                [
+                    ("输出评论语义 CSV", output_csv),
+                    ("输出评论语义 JSONL", jsonl_output),
+                    ("回写标签总表 CSV", tags_output),
+                ]
+            )
+            command = comment_semantics_command(
+                input_csv,
+                output_csv,
+                jsonl_output,
+                tags_output,
+                model_dir,
+                device,
+                int(batch_size),
+                int(max_length),
+                float(threshold),
+                float(margin),
+                int(max_tags),
+                int(limit),
+                keyword_fallback,
+                no_progress,
+            )
+            submit_subprocess("生成评论语义", "comment-semantics", command, int(timeout))
+
+        render_result("comment-semantics", "脚本输出会显示在这里。")
 
     with st.expander("音频特征与声源分离", expanded=False):
         with st.form("process-audio-features"):

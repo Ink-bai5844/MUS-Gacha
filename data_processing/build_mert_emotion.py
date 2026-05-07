@@ -1,13 +1,12 @@
 #!/usr/bin/env python
 """
-Demo for running local m-a-p/MERT-v1-330M on a FLAC file and producing a
-music emotion report.
+Build a local m-a-p/MERT-v1-330M emotion report for one audio file.
 
 Important: MERT-v1-330M is a self-supervised music representation model. For
 real emotion recognition you should load a fine-tuned classification head with
 --head-checkpoint. Without that head this script runs a deterministic audio
-affect proxy so the demo is end-to-end runnable, but the proxy is not a trained
-MERT emotion classifier.
+affect proxy so the command is end-to-end runnable, but the proxy is not a
+trained MERT emotion classifier.
 """
 
 from __future__ import annotations

@@ -20,6 +20,7 @@ HISTORY_FEATURES = {
     "scene": "scene_tag_list",
     "audio": "audio_tag_list",
     "lyric_terms": "lyric_terms",
+    "lyric_semantic": "lyric_semantic_tags",
     "comment_semantic": "comment_semantic_tags",
     "artists": "artist_list",
     "title_terms": "title_terms",
@@ -186,6 +187,7 @@ def build_history_preference_maps(history_entries, scoring_resources, dimension_
         "artists": float(dimension_weights.get("歌手", 1.0)),
         "title_terms": float(dimension_weights.get("歌名关键词", 1.0)),
         "lyric_terms": float(dimension_weights.get("歌词关键词", 1.0)),
+        "lyric_semantic": float(dimension_weights.get("歌词语义", 1.0)),
         "comment_semantic": float(dimension_weights.get("评论语义", 1.0)),
     }
 

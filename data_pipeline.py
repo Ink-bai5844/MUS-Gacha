@@ -1,5 +1,4 @@
 import hashlib
-import json
 import math
 import pickle
 import re
@@ -10,12 +9,10 @@ import pandas as pd
 import streamlit as st
 
 from config import (
-    AUDIO_FEATURE_DATA_DIR,
     BASE_DIR,
     CACHE_DIR,
     GENERATED_TAG_COLUMNS,
     LYRICS_DIR,
-    MERT_DATA_DIR,
     PREPROCESS_CACHE_VERSION,
     PREPROCESSED_DATA_FILE,
     PREPROCESSED_HASH_FILE,
@@ -25,7 +22,6 @@ from config import (
 )
 from utils_core import build_search_text, extract_language_tags, preferred_quality, read_lyric
 from utils_text import (
-    extract_comment_semantic_tags,
     extract_lyric_terms,
     extract_title_terms,
     parse_bool,
@@ -51,42 +47,7 @@ def csv_paths(directory: Path, pattern: str = "*.csv") -> list[Path]:
 
 
 def tag_csv_paths() -> list[Path]:
-    return csv_paths(TAG_DATA_DIR, "*.csv")
-
-
-def tag_jsonl_paths() -> list[Path]:
-    if not TAG_DATA_DIR.exists():
-        return []
-    return sorted(path for path in TAG_DATA_DIR.glob("*.jsonl") if path.is_file())
-
-
-def audio_match_csv_paths() -> list[Path]:
-    return csv_paths(AUDIO_FEATURE_DATA_DIR, "*audio_song_matches*.csv")
-
-
-def audio_feature_csv_paths() -> list[Path]:
-    return csv_paths(AUDIO_FEATURE_DATA_DIR, "*audio_features*.csv")
-
-
-def mert_csv_paths() -> list[Path]:
-    paths = [
-        *csv_paths(MERT_DATA_DIR, "*mert_index*.csv"),
-        *csv_paths(MERT_DATA_DIR, "*mert_clusters*.csv"),
-    ]
-    return sorted(dict.fromkeys(paths))
-
-
-def read_jsonl_frame(path: Path) -> pd.DataFrame:
-    rows = []
-    with path.open("r", encoding="utf-8-sig") as file:
-        for line in file:
-            line = line.strip()
-            if not line:
-                continue
-            record = json.loads(line)
-            if isinstance(record, dict):
-                rows.append(record)
-    return pd.DataFrame(rows)
+    return csv_paths(TAG_DATA_DIR, "*song_tags.csv")
 
 
 def normalize_song_id_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -152,68 +113,11 @@ def load_tag_result_frames() -> list[pd.DataFrame]:
     frames = []
     for path in tag_csv_paths():
         frames.append(pd.read_csv(path, dtype={"song_id": "string"}))
-    for path in tag_jsonl_paths():
-        frames.append(read_jsonl_frame(path))
     return frames
-
-
-def load_audio_match_frames() -> list[pd.DataFrame]:
-    frames = []
-    for path in audio_match_csv_paths():
-        frame = pd.read_csv(path, dtype={"song_id": "string"})
-        frame.columns = [col.strip() for col in frame.columns]
-        frame = frame.rename(
-            columns={
-                "file_path": "local_audio_path",
-                "match_score": "audio_match_score",
-                "audio_title": "local_audio_title",
-                "audio_artist": "local_audio_artist",
-                "audio_album": "local_audio_album",
-            }
-        )
-        frames.append(frame)
-    return frames
-
-
-def load_audio_feature_frames() -> list[pd.DataFrame]:
-    return [pd.read_csv(path, dtype={"song_id": "string"}) for path in audio_feature_csv_paths()]
 
 
 def load_generated_tags():
-    frames = [
-        merge_generated_tag_sets(load_tag_result_frames()),
-        merge_generated_tag_sets(load_audio_match_frames()),
-        merge_generated_tag_sets(load_audio_feature_frames()),
-        load_mert_tags(),
-    ]
-    return merge_generated_tag_sets([frame for frame in frames if not frame.empty])
-
-
-def load_mert_tags():
-    mert_frames = []
-    for path in mert_csv_paths():
-        if not path.exists():
-            continue
-        mert_df = pd.read_csv(path, dtype={"song_id": "string"})
-        mert_df.columns = [col.strip() for col in mert_df.columns]
-        keep_columns = ["song_id"] + [col for col in GENERATED_TAG_COLUMNS if col in mert_df.columns]
-        mert_frames.append(mert_df[keep_columns].drop_duplicates("song_id"))
-
-    if not mert_frames:
-        return pd.DataFrame()
-
-    merged_df = mert_frames[0]
-    for frame in mert_frames[1:]:
-        merged_df = merged_df.merge(frame, on="song_id", how="outer", suffixes=("", "_mert_source"))
-        for col in [item for item in GENERATED_TAG_COLUMNS if f"{item}_mert_source" in merged_df.columns]:
-            if col in merged_df.columns:
-                has_value = merged_df[col].fillna("").astype(str).str.len().gt(0)
-                merged_df[col] = merged_df[col].where(has_value, merged_df[f"{col}_mert_source"])
-            else:
-                merged_df[col] = merged_df[f"{col}_mert_source"]
-            merged_df = merged_df.drop(columns=[f"{col}_mert_source"])
-
-    return merged_df.drop_duplicates("song_id")
+    return merge_generated_tag_sets(load_tag_result_frames())
 
 
 def filter_by_keywords(df, query):
@@ -327,6 +231,7 @@ def build_scoring_resources(df):
         "scene": frequency_counter(list_series("scene_tag_list")),
         "audio": frequency_counter(list_series("audio_tag_list")),
         "lyric_terms": frequency_counter(list_series("lyric_terms")),
+        "lyric_semantic": frequency_counter(list_series("lyric_semantic_tags")),
         "comment_semantic": frequency_counter(list_series("comment_semantic_tags")),
         "artists": frequency_counter(list_series("artist_list")),
         "title_terms": frequency_counter(list_series("title_terms")),
@@ -343,6 +248,7 @@ def build_empty_scoring_resources():
         "scene": Counter(),
         "audio": Counter(),
         "lyric_terms": Counter(),
+        "lyric_semantic": Counter(),
         "comment_semantic": Counter(),
         "artists": Counter(),
         "title_terms": Counter(),
@@ -372,10 +278,6 @@ def get_preprocess_data_hash():
 
     result_path_groups = [
         ("tag-csv", tag_csv_paths()),
-        ("tag-jsonl", tag_jsonl_paths()),
-        ("audio-matches", audio_match_csv_paths()),
-        ("audio-features", audio_feature_csv_paths()),
-        ("mert", mert_csv_paths()),
     ]
     for group_name, paths in result_path_groups:
         hasher.update(group_name.encode("utf-8"))
@@ -416,6 +318,7 @@ def apply_dynamic_music_scores(
     artist_weights,
     title_weights,
     lyric_weights,
+    lyric_semantic_weights,
     comment_weights,
     history_preference=None,
     global_history_w=0.0,
@@ -476,6 +379,16 @@ def apply_dynamic_music_scores(
     detail_parts["歌词关键词"] = lyric_contribution
     total += lyric_contribution
 
+    lyric_semantic_scores = multi_feature_score(
+        result["lyric_semantic_tags"],
+        feature_base_scores(scoring_resources["lyric_semantic"]),
+        lyric_semantic_weights,
+        default_weight=1.0,
+    )
+    lyric_semantic_contribution = lyric_semantic_scores * float(dimension_weights.get("歌词语义", 1.0)) * 0.65
+    detail_parts["歌词语义"] = lyric_semantic_contribution
+    total += lyric_semantic_contribution
+
     comment_scores = multi_feature_score(
         result["comment_semantic_tags"],
         feature_base_scores(scoring_resources["comment_semantic"]),
@@ -512,6 +425,7 @@ def apply_dynamic_music_scores(
             ("artists", "artist_list", 0.85),
             ("title_terms", "title_terms", 0.55),
             ("lyric_terms", "lyric_terms", 0.50),
+            ("lyric_semantic", "lyric_semantic_tags", 0.65),
             ("comment_semantic", "comment_semantic_tags", 0.75),
         ]
         for resource_key, column, scale in history_specs:
@@ -591,7 +505,8 @@ def build_preprocessed_music_data():
     df["audio_tag_list"] = df["audio_tags"].apply(split_tags)
     df["title_terms"] = df.apply(extract_title_terms, axis=1)
     df["lyric_terms"] = df.apply(extract_lyric_terms, axis=1)
-    df["comment_semantic_tags"] = df.apply(extract_comment_semantic_tags, axis=1)
+    df["lyric_semantic_tags"] = df["lyric_semantic_tags"].apply(split_tags)
+    df["comment_semantic_tags"] = df["comment_semantic_tags"].apply(split_tags)
     df["search_text"] = df.apply(build_search_text, axis=1)
     df["lyrics_chars"] = df["full_lyric"].str.len()
     df["netease_url"] = "https://music.163.com/#/song?id=" + df["song_id"].astype(str)

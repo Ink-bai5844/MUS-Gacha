@@ -182,6 +182,7 @@ with st.sidebar.expander("全局维度权重", expanded=True):
         "歌手": st.slider("歌手倍率（常见或指定歌手带来的推荐加成）", 0.0, 5.0, 1.0, 0.1),
         "歌名关键词": st.slider("歌名/专辑关键词倍率（从歌名、别名、专辑名提取的关键词）", 0.0, 5.0, 0.7, 0.1),
         "歌词关键词": st.slider("歌词关键词倍率（从完整歌词中提取的高频语义词）", 0.0, 5.0, 0.8, 0.1),
+        "歌词语义": st.slider("歌词语义倍率（歌词里的爱情、离别、成长、夜晚等语义意象）", 0.0, 5.0, 0.8, 0.1),
         "评论语义": st.slider("评论语义倍率（热门评论里的回忆、治愈、热血等共鸣）", 0.0, 5.0, 0.8, 0.1),
         "热度": st.slider("热度倍率（网易云热度数值带来的基础加分）", 0.0, 5.0, 0.8, 0.1),
         "歌词完整度": st.slider("歌词完整度倍率（歌词行数和本地歌词完整程度）", 0.0, 5.0, 0.5, 0.1),
@@ -250,6 +251,19 @@ with st.sidebar.expander("歌词关键词权重配置", expanded=False):
             key=f"lyric-weight-{term}",
         )
 
+with st.sidebar.expander("歌词语义权重配置", expanded=False):
+    all_lyric_semantic_tags = sorted(scoring_resources["lyric_semantic"].keys())
+    selected_lyric_semantic_tags = st.multiselect("歌词语义标签", options=all_lyric_semantic_tags, default=[])
+    dynamic_lyric_semantic_weights = {}
+    for tag in selected_lyric_semantic_tags:
+        dynamic_lyric_semantic_weights[tag] = st.number_input(
+            f"歌词语义「{tag}」权重",
+            value=1.0,
+            step=0.1,
+            format="%.1f",
+            key=f"lyric-semantic-weight-{tag}",
+        )
+
 with st.sidebar.expander("评论语义权重配置", expanded=False):
     all_comment_tags = sorted(scoring_resources["comment_semantic"].keys())
     selected_comment_tags = st.multiselect("评论语义标签", options=all_comment_tags, default=[])
@@ -280,6 +294,7 @@ scored_df = apply_dynamic_music_scores(
     dynamic_artist_weights,
     dynamic_title_weights,
     dynamic_lyric_weights,
+    dynamic_lyric_semantic_weights,
     dynamic_comment_weights,
     history_preference=history_preference,
     global_history_w=global_history_weight,

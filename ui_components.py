@@ -112,6 +112,7 @@ def render_detail(song):
                 ("智能标签", safe_text(song.get("all_tags"))),
                 ("评分拆解", safe_text(song.get("score_breakdown"))),
                 ("歌词关键词", " | ".join(song.get("lyric_terms", [])[:20])),
+                ("歌词语义", " | ".join(song.get("lyric_semantic_tags", []))),
                 ("评论语义", " | ".join(song.get("comment_semantic_tags", []))),
                 ("本地音频", safe_text(song.get("local_audio_path"))),
                 ("本地元数据", " · ".join([item for item in [
