@@ -1,13 +1,22 @@
+import hashlib
 import math
 import re
 
 import pandas as pd
 import streamlit as st
 
-from config import HISTORY_RECOMMENDATION_CACHE_SIZE, INITIAL_TAG_WEIGHTS, MAX_DISPLAY, SOURCE_DATA_DIR
+from config import (
+    AUDIO_SIMILARITY_TOP_K,
+    HISTORY_RECOMMENDATION_CACHE_SIZE,
+    INITIAL_TAG_WEIGHTS,
+    MAX_DISPLAY,
+    MERT_EMBEDDING_DIR,
+    SOURCE_DATA_DIR,
+)
 from data_pipeline import apply_dynamic_music_scores, filter_by_keywords, load_music_data
 from ui_components import render_detail, render_page_style
 from ui_data_processing import render_data_processing_interface
+from utils_audio_similarity import search_similar_audio_items
 from utils_charts import (
     build_dataframe_chart_data,
     build_global_preference_chart_data,
@@ -45,6 +54,25 @@ def make_selectable_table(table_df):
     selected_song_id = current_selected_song_id()
     editable_df["选中"] = editable_df["song_id"].astype(str).eq(selected_song_id)
     return editable_df
+
+
+def build_audio_search_signature(query_song_id, query_audio_bytes, candidate_ids):
+    normalized_id = str(query_song_id).strip()
+    audio_digest = hashlib.md5(query_audio_bytes).hexdigest() if query_audio_bytes else ""
+    joined_ids = "\n".join(str(song_id) for song_id in candidate_ids)
+    raw = f"{normalized_id}\n{audio_digest}\n{joined_ids}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def apply_similarity_result(filtered_df, matched_ids, score_map, score_column):
+    if filtered_df.empty or not matched_ids:
+        return pd.DataFrame()
+
+    normalized_matched_ids = [str(song_id) for song_id in matched_ids]
+    result_df = filtered_df[filtered_df["song_id"].astype(str).isin(normalized_matched_ids)].copy()
+    result_df[score_column] = result_df["song_id"].astype(str).map(score_map)
+    result_df = result_df.sort_values(score_column, ascending=False).reset_index(drop=True)
+    return result_df
 
 
 def apply_table_selection(edited_df, source_df):
@@ -141,6 +169,22 @@ if df_base.empty:
 
 search_kw = st.sidebar.text_input("实时检索", placeholder="歌名 / 歌手 / 专辑 / 歌词 / 评论")
 lyrics_kw = st.sidebar.text_input("歌词专项检索", placeholder="只在完整歌词里查找")
+
+with st.sidebar.expander("音频相似检索 (MERT)", expanded=False):
+    audio_query_id = st.text_input(
+        "输入库内歌曲 ID",
+        placeholder="例如: 1850436473",
+    )
+    audio_query_file = st.file_uploader(
+        "或上传一段音频",
+        type=["flac", "wav", "mp3", "m4a", "ogg"],
+        accept_multiple_files=False,
+    )
+    st.caption(
+        f"上传音频优先于 ID；会在当前候选结果里按 MERT 相似度筛到前 {AUDIO_SIMILARITY_TOP_K} 首。"
+    )
+    if audio_query_file is not None:
+        st.audio(audio_query_file)
 
 with st.sidebar.expander("基础筛选", expanded=True):
     all_artists = sorted({artist for artists in df_base["artist_list"] for artist in artists})
@@ -360,6 +404,73 @@ filtered_df = filtered_df[
     )
 ].copy()
 
+audio_query_bytes = audio_query_file.getvalue() if audio_query_file is not None else None
+audio_query_name = audio_query_file.name if audio_query_file is not None else ""
+audio_query_id = audio_query_id.strip()
+
+if (audio_query_bytes or audio_query_id) and not filtered_df.empty:
+    surviving_ids = filtered_df["song_id"].astype(str).tolist()
+    current_audio_signature = build_audio_search_signature(
+        audio_query_id,
+        audio_query_bytes,
+        surviving_ids,
+    )
+    cached_audio_signature = st.session_state.get("audio_search_signature")
+    cached_audio_payload = st.session_state.get("audio_search_result_payload")
+
+    if cached_audio_signature == current_audio_signature and cached_audio_payload is not None:
+        filtered_df = apply_similarity_result(
+            filtered_df,
+            cached_audio_payload["matched_ids"],
+            cached_audio_payload["score_map"],
+            "audio_similarity_score",
+        )
+    else:
+        with st.spinner("正在进行 MERT 音频相似检索..."):
+            try:
+                audio_search_payload = search_similar_audio_items(
+                    query_song_id=audio_query_id,
+                    query_audio_bytes=audio_query_bytes,
+                    query_audio_name=audio_query_name,
+                    candidate_ids=surviving_ids,
+                    top_k=AUDIO_SIMILARITY_TOP_K,
+                )
+            except FileNotFoundError:
+                st.warning(
+                    f"音频相似检索暂时不可用：未找到 MERT 向量目录 `{MERT_EMBEDDING_DIR}`。"
+                )
+            except ValueError as exc:
+                st.warning(str(exc))
+            except Exception as exc:
+                st.error(f"音频相似检索失败：{exc}")
+            else:
+                audio_results = audio_search_payload["results"]
+                if audio_results:
+                    matched_ids = [item["item_id"] for item in audio_results]
+                    score_map = {item["item_id"]: item["score"] for item in audio_results}
+
+                    filtered_df = apply_similarity_result(
+                        filtered_df,
+                        matched_ids,
+                        score_map,
+                        "audio_similarity_score",
+                    )
+
+                    st.session_state["audio_search_signature"] = current_audio_signature
+                    st.session_state["audio_search_result_payload"] = {
+                        "matched_ids": matched_ids,
+                        "score_map": score_map,
+                    }
+                    st.session_state["audio_search_meta"] = audio_search_payload
+                else:
+                    filtered_df = pd.DataFrame()
+                    st.session_state["audio_search_signature"] = current_audio_signature
+                    st.session_state["audio_search_result_payload"] = {
+                        "matched_ids": [],
+                        "score_map": {},
+                    }
+                    st.info("当前候选结果里没有命中可用的 MERT 音频向量。")
+
 st.title("墨白的音乐仓库")
 
 metric_cols = st.columns(5)
@@ -380,10 +491,17 @@ with tab_overview:
         left, right = st.columns([1.2, 1], gap="large")
         with left:
             st.subheader("推荐候选")
-            top_df = filtered_df.sort_values(["dynamic_score", "comment_total"], ascending=False).head(20)
+            if "audio_similarity_score" in filtered_df.columns:
+                top_df = filtered_df.sort_values(
+                    ["audio_similarity_score", "dynamic_score"],
+                    ascending=False,
+                ).head(20)
+            else:
+                top_df = filtered_df.sort_values(["dynamic_score", "comment_total"], ascending=False).head(20)
             overview_columns = [
                 "album_pic_url",
                 "选中",
+                "audio_similarity_score",
                 "dynamic_score",
                 "name",
                 "artist_names",
@@ -395,31 +513,40 @@ with tab_overview:
                 "comment_total",
                 "netease_url",
             ]
+            overview_source_columns = [
+                "song_id",
+                "album_pic_url",
+                "audio_similarity_score",
+                "dynamic_score",
+                "name",
+                "artist_names",
+                "album_name",
+                "all_tags",
+                "score_breakdown",
+                "quality",
+                "duration_text",
+                "comment_total",
+                "netease_url",
+            ]
+            overview_source_columns = [col for col in overview_source_columns if col in top_df.columns]
             overview_table = make_selectable_table(
-                top_df[
-                    [
-                        "song_id",
-                        "album_pic_url",
-                        "dynamic_score",
-                        "name",
-                        "artist_names",
-                        "album_name",
-                        "all_tags",
-                        "score_breakdown",
-                        "quality",
-                        "duration_text",
-                        "comment_total",
-                        "netease_url",
-                    ]
-                ]
+                top_df[overview_source_columns]
             )
             if link_tracking_server is not None and "netease_url" in overview_table.columns:
                 overview_table["netease_url"] = top_df.apply(build_tracked_link, axis=1)
+            overview_display_columns = [col for col in overview_columns if col in overview_table.columns]
+            overview_display_columns += [col for col in overview_table.columns if col not in overview_display_columns]
             edited_overview = st.data_editor(
                 overview_table,
                 column_config={
                     "album_pic_url": st.column_config.ImageColumn("封面"),
                     "选中": st.column_config.CheckboxColumn("选中", width="small"),
+                    "audio_similarity_score": st.column_config.ProgressColumn(
+                        "音频相似度",
+                        min_value=0,
+                        max_value=100,
+                        format="%.1f",
+                    ),
                     "dynamic_score": st.column_config.ProgressColumn(
                         "推荐分",
                         min_value=min_possible_score,
@@ -436,7 +563,7 @@ with tab_overview:
                     "comment_total": st.column_config.NumberColumn("评论", format="%d"),
                     "netease_url": st.column_config.LinkColumn("链接", display_text="打开"),
                 },
-                column_order=overview_columns,
+                column_order=overview_display_columns,
                 disabled=[col for col in overview_table.columns if col != "选中"],
                 hide_index=True,
                 width="stretch",
@@ -469,6 +596,8 @@ with tab_library:
             "歌名": "name",
             "歌手": "artist_names",
         }
+        if "audio_similarity_score" in filtered_df.columns:
+            sort_columns = {"音频相似度": "audio_similarity_score", **sort_columns}
         col_sort, col_order, col_page = st.columns([1.4, 1.0, 1.4])
         with col_sort:
             sort_label = st.selectbox("全局排序依据", options=list(sort_columns), index=0)
@@ -498,6 +627,7 @@ with tab_library:
         library_columns = [
             "album_pic_url",
             "选中",
+            "audio_similarity_score",
             "dynamic_score",
             "song_id",
             "name",
@@ -514,35 +644,44 @@ with tab_library:
             "has_translation",
             "netease_url",
         ]
+        library_source_columns = [
+            "album_pic_url",
+            "audio_similarity_score",
+            "dynamic_score",
+            "song_id",
+            "name",
+            "artist_names",
+            "album_name",
+            "all_tags",
+            "score_breakdown",
+            "publish_date",
+            "quality",
+            "duration_text",
+            "popularity",
+            "comment_total",
+            "has_lyric",
+            "has_translation",
+            "netease_url",
+        ]
+        library_source_columns = [col for col in library_source_columns if col in display_df.columns]
         library_table = make_selectable_table(
-            display_df[
-                [
-                    "album_pic_url",
-                    "dynamic_score",
-                    "song_id",
-                    "name",
-                    "artist_names",
-                    "album_name",
-                    "all_tags",
-                    "score_breakdown",
-                    "publish_date",
-                    "quality",
-                    "duration_text",
-                    "popularity",
-                    "comment_total",
-                    "has_lyric",
-                    "has_translation",
-                    "netease_url",
-                ]
-            ]
+            display_df[library_source_columns]
         )
         if link_tracking_server is not None and "netease_url" in library_table.columns:
             library_table["netease_url"] = display_df.apply(build_tracked_link, axis=1)
+        library_display_columns = [col for col in library_columns if col in library_table.columns]
+        library_display_columns += [col for col in library_table.columns if col not in library_display_columns]
         edited_library = st.data_editor(
             library_table,
             column_config={
                 "album_pic_url": st.column_config.ImageColumn("封面"),
                 "选中": st.column_config.CheckboxColumn("选中", width="small"),
+                "audio_similarity_score": st.column_config.ProgressColumn(
+                    "音频相似度",
+                    min_value=0,
+                    max_value=100,
+                    format="%.1f",
+                ),
                 "dynamic_score": st.column_config.ProgressColumn(
                     "推荐分",
                     min_value=min_possible_score,
@@ -564,7 +703,7 @@ with tab_library:
                 "has_translation": "翻译",
                 "netease_url": st.column_config.LinkColumn("链接", display_text="打开"),
             },
-            column_order=library_columns,
+            column_order=library_display_columns,
             disabled=[col for col in library_table.columns if col != "选中"],
             hide_index=True,
             width="stretch",

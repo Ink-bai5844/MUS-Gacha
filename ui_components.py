@@ -134,9 +134,19 @@ def render_detail(song, link_tracking_server=None):
         meta_cols[2].metric("评论", int(song.get("comment_total", 0)))
         meta_cols[3].metric("时长", safe_text(song.get("duration_text", "")) or f"{song.get('duration_minutes', 0):.1f} 分")
 
+        audio_similarity_score = ""
+        if "audio_similarity_score" in song:
+            try:
+                score_value = float(song.get("audio_similarity_score"))
+                if pd.notna(score_value):
+                    audio_similarity_score = f"{score_value:.1f}"
+            except (TypeError, ValueError):
+                audio_similarity_score = safe_text(song.get("audio_similarity_score"))
+
         info = pd.DataFrame(
             [
                 ("发行日期", safe_text(song.get("publish_date"))),
+                ("音频相似度", audio_similarity_score),
                 ("版权/可播", f"{safe_text(song.get('copyright'))} / {'可播' if song.get('playable') else '不可播'}"),
                 ("最佳音质", safe_text(song.get("quality"))),
                 ("智能标签", safe_text(song.get("all_tags"))),
