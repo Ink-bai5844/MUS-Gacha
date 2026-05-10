@@ -212,6 +212,38 @@ pip install scikit-learn pyarrow mutagen jieba janome nltk tqdm
 
 ## ⚙️ 如何开始
 
+### 0. 可选：直接下载示例数据集
+
+如果只是想先体验应用，或不想从网易云重新采集数据，可以直接下载已经整理好的 Hugging Face 数据集：
+
+[Ink-bai/Music-info-datasets](https://huggingface.co/datasets/Ink-bai/Music-info-datasets)
+
+下载后把数据集仓库里的 `data/` 目录放到本项目根目录，保持下面这些路径存在即可：
+
+```text
+data/source/*.csv
+data/tags/*_song_tags.csv
+data/source/lyrics/*.txt
+```
+
+如果需要音频特征和 MERT 相似度，也保留：
+
+```text
+data/matches/
+data/features/
+data/mert/
+```
+
+命令行方式示例：
+
+```powershell
+git lfs install
+git clone https://huggingface.co/datasets/Ink-bai/Music-info-datasets hf_music_info_datasets
+Copy-Item -Recurse hf_music_info_datasets\data .\data
+```
+
+如果你已经有自己的 `data/` 目录，建议先改名备份，或只拷贝需要的子目录，避免覆盖自己的采集结果。
+
 ### 1. 准备 QCloudMusicApi
 
 项目里的 `data_get/qcloud_song_store.py` 会调用 QCloudMusicApi 动态库。默认会搜索：
